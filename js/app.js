@@ -21,48 +21,389 @@ function formatDate(d) {
 }
 todayLabel.textContent = formatDate(new Date());
 
-// --- Chrono (pointage manuel — Phase 1 : logique de base seulement) ---
-// La vraie logique (GPS, calcul de trajet, lieu inconnu) arrive en Phase 3-4.
-// Ici on pose juste le squelette : un bouton qui démarre/arrête un chrono local.
+// --- Pointage (Phase 4 : GPS, trajets reels, lieu inconnu) ---
 const chronoTime = document.getElementById("chrono-time");
 const chronoSub = document.getElementById("chrono-sub");
 const statusBadge = document.getElementById("status-badge");
 const btnPunch = document.getElementById("btn-punch");
+const punchFlowEl = document.getElementById("punch-flow");
+const stopsListEl = document.getElementById("stops-list");
 
-let startedAt = null;
-let tickHandle = null;
+let jourState = { status: "not_started", clientId: null, clientNom: null };
+let mainStartedAt = null;
+let subStartedAt = null;
+let mainTickHandle = null;
+let subTickHandle = null;
 
-function pad(n) { return String(n).padStart(2, "0"); }
+function pad2(n) {
+  return String(n).padStart(2, "0");
+}
 
-function renderChrono() {
-  if (!startedAt) {
-    chronoTime.textContent = "00:00:00";
-    return;
-  }
-  const elapsedMs = Date.now() - startedAt;
-  const totalSec = Math.floor(elapsedMs / 1000);
+function fmtElapsed(startedAt) {
+  if (!startedAt) return "00:00:00";
+  const totalSec = Math.max(0, Math.floor((Date.now() - startedAt) / 1000));
   const h = Math.floor(totalSec / 3600);
   const m = Math.floor((totalSec % 3600) / 60);
   const s = totalSec % 60;
-  chronoTime.textContent = `${pad(h)}:${pad(m)}:${pad(s)}`;
+  return `${pad2(h)}:${pad2(m)}:${pad2(s)}`;
 }
 
-btnPunch.addEventListener("click", () => {
-  if (!startedAt) {
-    startedAt = Date.now();
-    tickHandle = setInterval(renderChrono, 1000);
-    statusBadge.textContent = "En cours";
-    chronoSub.textContent = "Parti de l'entrepôt à " + new Date(startedAt).toLocaleTimeString("fr-CA", { hour: "2-digit", minute: "2-digit" });
-    btnPunch.textContent = "Sortie / fin de journée";
-  } else {
-    clearInterval(tickHandle);
+function renderMainChrono() {
+  chronoTime.textContent = fmtElapsed(mainStartedAt);
+}
+
+function startMainTick() {
+  if (mainTickHandle) clearInterval(mainTickHandle);
+  mainTickHandle = setInterval(renderMainChrono, 1000);
+  renderMainChrono();
+}
+
+function stopMainTick() {
+  if (mainTickHandle) clearInterval(mainTickHandle);
+  mainTickHandle = null;
+  mainStartedAt = null;
+  chronoTime.textContent = "00:00:00";
+}
+
+function startSubTick() {
+  if (subTickHandle) clearInterval(subTickHandle);
+  const tick = () => {
+    const subEl = document.getElementById("sub-chrono");
+    if (subEl) subEl.textContent = fmtElapsed(subStartedAt);
+  };
+  subTickHandle = setInterval(tick, 1000);
+  tick();
+}
+
+function stopSubTick() {
+  if (subTickHandle) clearInterval(subTickHandle);
+  subTickHandle = null;
+}
+
+function getPosition() {
+  return new Promise((resolve) => {
+    if (!("geolocation" in navigator)) return resolve(null);
+    navigator.geolocation.getCurrentPosition(
+      (pos) => resolve({ latitude: pos.coords.latitude, longitude: pos.coords.longitude }),
+      () => resolve(null),
+      { enableHighAccuracy: true, timeout: 8000, maximumAge: 30000 }
+    );
+  });
+}
+
+async function postPointage(type, clientId) {
+  const pos = await getPosition();
+  const res = await fetch("/api/pointages", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      type,
+      client_id: clientId || null,
+      latitude: pos ? pos.latitude : null,
+      longitude: pos ? pos.longitude : null,
+    }),
+  });
+  if (!res.ok) throw new Error("Réponse " + res.status);
+  return res.json();
+}
+
+async function postMandat(clientId, payload) {
+  const res = await fetch("/api/mandats", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ client_id: clientId, ...payload }),
+  });
+  if (!res.ok) throw new Error("Réponse " + res.status);
+  return res.json();
+}
+
+function updatePunchButton() {
+  if (jourState.status === "not_started") {
+    btnPunch.style.display = "";
+    btnPunch.textContent = "Départ de l'entrepôt";
     statusBadge.textContent = "Pas encore parti";
     chronoSub.textContent = "Le compteur démarre au moment où tu quittes l'entrepôt.";
-    btnPunch.textContent = "Départ de l'entrepôt";
-    startedAt = null;
-    renderChrono();
+  } else if (jourState.status === "en_route") {
+    btnPunch.style.display = "";
+    btnPunch.textContent = "Retour à l'entrepôt";
+    statusBadge.textContent = "En route";
+    chronoSub.textContent = "Choisis ta destination ci-dessous, ou termine ta journée.";
+  } else {
+    btnPunch.style.display = "none";
+    statusBadge.textContent = "Chez un client";
+  }
+}
+
+async function renderPunchFlow() {
+  if (jourState.status === "not_started") {
+    punchFlowEl.innerHTML = "";
+    return;
+  }
+
+  if (jourState.status === "en_route") {
+    const clients = await ensureClientsCache();
+    const rows = clients
+      .map(
+        (c) => `
+      <div class="picker-item" data-action="arrivee" data-client-id="${c.id}" data-client-nom="${escapeHtml(c.nom)}">
+        <div>
+          <div class="picker-item-name">${escapeHtml(c.nom)}</div>
+          <div class="picker-item-sub">${escapeHtml(c.adresse || "")}</div>
+        </div>
+        <div class="picker-item-arrow">›</div>
+      </div>`
+      )
+      .join("");
+    punchFlowEl.innerHTML = `
+      <div class="section-title">Où vas-tu?</div>
+      <div class="card list-card">
+        ${rows}
+        <div class="picker-item unknown" data-action="lieu-inconnu">
+          <div>
+            <div class="picker-item-name">Lieu inconnu</div>
+            <div class="picker-item-sub">Ce client n'est pas encore dans ta liste</div>
+          </div>
+          <div class="picker-item-arrow">›</div>
+        </div>
+      </div>
+    `;
+    return;
+  }
+
+  if (jourState.status === "lieu_inconnu_form") {
+    punchFlowEl.innerHTML = `
+      <div class="card" style="padding:16px;">
+        <div class="section-title" style="margin-bottom:10px;">Nouveau client</div>
+        <div class="inline-form">
+          <div class="form-group">
+            <label class="form-label" for="new-client-nom">Nom du client</label>
+            <input class="form-input" id="new-client-nom" type="text" placeholder="Ex : Dépanneur Villeray">
+          </div>
+          <div class="form-group">
+            <label class="form-label" for="new-client-adresse">Adresse</label>
+            <input class="form-input" id="new-client-adresse" type="text" placeholder="Ex : 123 rue Principale">
+          </div>
+          <button class="btn btn-primary" data-action="creer-client">Créer et arriver</button>
+          <button class="btn btn-secondary" data-action="annuler-lieu-inconnu">Annuler</button>
+        </div>
+      </div>
+    `;
+    return;
+  }
+
+  if (jourState.status === "chez_client") {
+    punchFlowEl.innerHTML = `
+      <div class="at-client-banner">
+        <div class="at-client-banner-label">Présentement chez</div>
+        <div class="at-client-banner-name">${escapeHtml(jourState.clientNom || "Client")}</div>
+        <div class="at-client-banner-time" id="sub-chrono">00:00:00</div>
+      </div>
+      <button class="btn btn-primary" data-action="terminer-client">Terminer chez ${escapeHtml(
+        jourState.clientNom || "ce client"
+      )}</button>
+    `;
+    startSubTick();
+    return;
+  }
+
+  if (jourState.status === "mandat_form") {
+    punchFlowEl.innerHTML = `
+      <div class="card" style="padding:16px;">
+        <div class="section-title" style="margin-bottom:10px;">Résumé du mandat — ${escapeHtml(jourState.clientNom || "")}</div>
+        <div class="inline-form">
+          <div class="form-group">
+            <label class="form-label" for="mandat-desc">Description</label>
+            <input class="form-input" id="mandat-desc" type="text" placeholder="Ex : Diagnostic fuite colonne montante">
+          </div>
+          <div class="form-group">
+            <label class="form-label" for="mandat-montant">Montant facturé ($)</label>
+            <input class="form-input" id="mandat-montant" type="number" step="0.01" placeholder="0.00">
+          </div>
+          <button class="btn btn-primary" data-action="enregistrer-mandat">Enregistrer le mandat</button>
+          <button class="btn btn-secondary" data-action="passer-mandat">Passer</button>
+        </div>
+      </div>
+    `;
+    return;
+  }
+}
+
+async function refreshJournal() {
+  try {
+    const res = await fetch("/api/pointages");
+    if (!res.ok) throw new Error("Réponse " + res.status);
+    const pointages = await res.json();
+    if (!pointages.length) {
+      stopsListEl.innerHTML = `<div class="placeholder">Aucun pointage aujourd'hui.</div>`;
+      return pointages;
+    }
+    const clients = await ensureClientsCache();
+    const nomOf = (id) => (clients.find((c) => String(c.id) === String(id)) || {}).nom;
+    const labelOf = (type) =>
+      ({
+        depart_entrepot: "Départ de l'entrepôt",
+        arrivee_client: "Arrivée",
+        depart_client: "Départ",
+        retour_entrepot: "Retour à l'entrepôt",
+      }[type] || type);
+    stopsListEl.innerHTML = pointages
+      .map((p) => {
+        const heure = new Date(p.horodatage).toLocaleTimeString("fr-CA", { hour: "2-digit", minute: "2-digit" });
+        const sub = p.client_id ? nomOf(p.client_id) || "Client" : "";
+        return `
+      <div class="journal-item">
+        <div>
+          <div class="journal-item-label">${labelOf(p.type)}</div>
+          ${sub ? `<div class="journal-item-sub">${escapeHtml(sub)}</div>` : ""}
+        </div>
+        <div class="journal-item-time">${heure}</div>
+      </div>`;
+      })
+      .join("");
+    return pointages;
+  } catch (err) {
+    stopsListEl.innerHTML = `<div class="placeholder">Impossible de charger le journal.<br>(${escapeHtml(
+      err.message
+    )})</div>`;
+    return [];
+  }
+}
+
+btnPunch.addEventListener("click", async () => {
+  btnPunch.disabled = true;
+  try {
+    if (jourState.status === "not_started") {
+      await postPointage("depart_entrepot", null);
+      mainStartedAt = Date.now();
+      startMainTick();
+      jourState.status = "en_route";
+      updatePunchButton();
+      await renderPunchFlow();
+      await refreshJournal();
+    } else if (jourState.status === "en_route") {
+      await postPointage("retour_entrepot", null);
+      stopMainTick();
+      jourState.status = "not_started";
+      updatePunchButton();
+      await renderPunchFlow();
+      await refreshJournal();
+    }
+  } catch (err) {
+    alert("Erreur de pointage : " + err.message);
+  } finally {
+    btnPunch.disabled = false;
   }
 });
+
+punchFlowEl.addEventListener("click", async (e) => {
+  const target = e.target.closest("[data-action]");
+  if (!target) return;
+  const action = target.dataset.action;
+
+  try {
+    if (action === "arrivee") {
+      const clientId = target.dataset.clientId;
+      const clientNom = target.dataset.clientNom;
+      await postPointage("arrivee_client", clientId);
+      subStartedAt = Date.now();
+      jourState.status = "chez_client";
+      jourState.clientId = clientId;
+      jourState.clientNom = clientNom;
+      updatePunchButton();
+      await renderPunchFlow();
+      await refreshJournal();
+    } else if (action === "lieu-inconnu") {
+      jourState.status = "lieu_inconnu_form";
+      await renderPunchFlow();
+    } else if (action === "annuler-lieu-inconnu") {
+      jourState.status = "en_route";
+      await renderPunchFlow();
+    } else if (action === "creer-client") {
+      const nom = document.getElementById("new-client-nom").value.trim();
+      const adresse = document.getElementById("new-client-adresse").value.trim();
+      if (!nom) {
+        alert("Le nom du client est requis.");
+        return;
+      }
+      const res = await fetch("/api/clients", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ nom, adresse }),
+      });
+      if (!res.ok) throw new Error("Réponse " + res.status);
+      const client = await res.json();
+      clientsCache = null;
+      clientsLoaded = false;
+      await postPointage("arrivee_client", client.id);
+      subStartedAt = Date.now();
+      jourState.status = "chez_client";
+      jourState.clientId = client.id;
+      jourState.clientNom = client.nom;
+      updatePunchButton();
+      await renderPunchFlow();
+      await refreshJournal();
+    } else if (action === "terminer-client") {
+      await postPointage("depart_client", jourState.clientId);
+      stopSubTick();
+      jourState.status = "mandat_form";
+      updatePunchButton();
+      await renderPunchFlow();
+      await refreshJournal();
+    } else if (action === "enregistrer-mandat") {
+      const description = document.getElementById("mandat-desc").value.trim();
+      const montant = document.getElementById("mandat-montant").value;
+      await postMandat(jourState.clientId, {
+        description: description || null,
+        montant_facture: montant ? Number(montant) : null,
+      });
+      jourState.status = "en_route";
+      jourState.clientId = null;
+      jourState.clientNom = null;
+      clientsLoaded = false;
+      updatePunchButton();
+      await renderPunchFlow();
+    } else if (action === "passer-mandat") {
+      jourState.status = "en_route";
+      jourState.clientId = null;
+      jourState.clientNom = null;
+      updatePunchButton();
+      await renderPunchFlow();
+    }
+  } catch (err) {
+    alert("Erreur : " + err.message);
+  }
+});
+
+async function initPointageState() {
+  const pointages = await refreshJournal();
+  if (!pointages.length) {
+    jourState.status = "not_started";
+    updatePunchButton();
+    await renderPunchFlow();
+    return;
+  }
+  const clients = await ensureClientsCache();
+  const nomOf = (id) => (clients.find((c) => String(c.id) === String(id)) || {}).nom;
+  const first = pointages[0];
+  const last = pointages[pointages.length - 1];
+  if (first.type === "depart_entrepot") {
+    mainStartedAt = new Date(first.horodatage).getTime();
+  }
+  if (last.type === "retour_entrepot") {
+    jourState.status = "not_started";
+  } else if (last.type === "arrivee_client") {
+    jourState.status = "chez_client";
+    jourState.clientId = last.client_id;
+    jourState.clientNom = nomOf(last.client_id) || "Client";
+    subStartedAt = new Date(last.horodatage).getTime();
+    startMainTick();
+  } else {
+    jourState.status = "en_route";
+    startMainTick();
+  }
+  updatePunchButton();
+  await renderPunchFlow();
+}
 
 // --- Clients (données réelles, via l'API branchée sur Netlify DB) ---
 const clientsListEl = document.getElementById("clients-list");
@@ -72,6 +413,18 @@ const clientDetailContent = document.getElementById("client-detail-content");
 const btnClientBack = document.getElementById("btn-client-back");
 
 let clientsLoaded = false;
+let clientsCache = null;
+
+async function ensureClientsCache() {
+  if (clientsCache) return clientsCache;
+  try {
+    const res = await fetch("/api/clients");
+    clientsCache = res.ok ? await res.json() : [];
+  } catch (err) {
+    clientsCache = [];
+  }
+  return clientsCache;
+}
 
 function heures(n) {
   return (Math.round((n || 0) * 10) / 10).toLocaleString("fr-CA") + " h";
@@ -292,6 +645,8 @@ async function saveReglages() {
     msg.textContent = "Erreur : impossible d'enregistrer.";
   }
 }
+
+initPointageState();
 
 // --- Service worker (rend l'app installable et utilisable hors ligne) ---
 if ("serviceWorker" in navigator) {
