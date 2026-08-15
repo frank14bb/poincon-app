@@ -1,0 +1,9 @@
+[build]
+  publish = "."
+    functions = "netlify/functions"
+
+    [[headers]]
+      for = "/service-worker.js"
+        [headers.values]
+            Cache-Control = "no-cache"
+            
