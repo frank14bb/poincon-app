@@ -442,6 +442,14 @@ function argent(n) {
   return (n || 0).toLocaleString("fr-CA", { style: "currency", currency: "CAD" });
 }
 
+// Convertit une valeur "date seulement" venant de l'API (ex: "2026-08-15" ou
+// "2026-08-15T00:00:00.000Z" selon comment la base la renvoie) en Date locale
+// a minuit, pour eviter le decalage d'un jour cause par l'interpretation UTC.
+function parseDateLocal(value) {
+  const iso = String(value).slice(0, 10);
+  return new Date(iso + "T00:00:00");
+}
+
 async function loadClients(force) {
   if (clientsLoaded && !force) return;
   clientsListEl.innerHTML = `<div class="placeholder">Chargement…</div>`;
@@ -500,7 +508,7 @@ async function openClient(id) {
         <div class="mandat-item">
           <div class="mandat-top">
             <div>
-              <div class="mandat-date">${new Date(m.date + "T00:00:00").toLocaleDateString("fr-CA", {
+              <div class="mandat-date">${parseDateLocal(m.date).toLocaleDateString("fr-CA", {
                 day: "2-digit",
                 month: "short",
               })}</div>
@@ -724,7 +732,7 @@ function renderSemaine(data) {
     <div class="mandat-item">
       <div class="mandat-top">
         <div>
-          <div class="mandat-date">${new Date(m.date + "T00:00:00").toLocaleDateString("fr-CA", {
+          <div class="mandat-date">${parseDateLocal(m.date).toLocaleDateString("fr-CA", {
             day: "2-digit",
             month: "short",
           })} · ${escapeHtml(m.client_nom)}</div>
