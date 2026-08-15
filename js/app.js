@@ -30,7 +30,7 @@ const btnPunch = document.getElementById("btn-punch");
 const punchFlowEl = document.getElementById("punch-flow");
 const stopsListEl = document.getElementById("stops-list");
 
-let jourState = { status: "not_started", clientId: null, clientNom: null };
+let jourState = { status: "not_started", clientId: null, clientNom: null, dureeHeures: null };
 let mainStartedAt = null;
 let subStartedAt = null;
 let mainTickHandle = null;
@@ -210,7 +210,8 @@ async function renderPunchFlow() {
   if (jourState.status === "mandat_form") {
     punchFlowEl.innerHTML = `
       <div class="card" style="padding:16px;">
-        <div class="section-title" style="margin-bottom:10px;">Résumé du mandat — ${escapeHtml(jourState.clientNom || "")}</div>
+        <div class="section-title" style="margin-bottom:2px;">Résumé du mandat — ${escapeHtml(jourState.clientNom || "")}</div>
+        <div class="chrono-sub" style="margin-bottom:10px;">Durée mesurée chez le client : ${heures(jourState.dureeHeures)}</div>
         <div class="inline-form">
           <div class="form-group">
             <label class="form-label" for="mandat-desc">Description</label>
@@ -345,6 +346,10 @@ punchFlowEl.addEventListener("click", async (e) => {
       await refreshJournal();
     } else if (action === "terminer-client") {
       await postPointage("depart_client", jourState.clientId);
+      // Duree reelle chez le client (mesuree, pas estimee), pour l'historique du client.
+      jourState.dureeHeures = subStartedAt
+        ? Math.round(((Date.now() - subStartedAt) / 3600000) * 100) / 100
+        : null;
       stopSubTick();
       jourState.status = "mandat_form";
       updatePunchButton();
@@ -356,10 +361,12 @@ punchFlowEl.addEventListener("click", async (e) => {
       await postMandat(jourState.clientId, {
         description: description || null,
         montant_facture: montant ? Number(montant) : null,
+        duree_heures: jourState.dureeHeures,
       });
       jourState.status = "en_route";
       jourState.clientId = null;
       jourState.clientNom = null;
+      jourState.dureeHeures = null;
       clientsLoaded = false;
       updatePunchButton();
       await renderPunchFlow();
@@ -367,6 +374,7 @@ punchFlowEl.addEventListener("click", async (e) => {
       jourState.status = "en_route";
       jourState.clientId = null;
       jourState.clientNom = null;
+      jourState.dureeHeures = null;
       updatePunchButton();
       await renderPunchFlow();
     }
@@ -492,7 +500,7 @@ async function openClient(id) {
         <div class="mandat-item">
           <div class="mandat-top">
             <div>
-              <div class="mandat-date">${new Date(m.date).toLocaleDateString("fr-CA", {
+              <div class="mandat-date">${new Date(m.date + "T00:00:00").toLocaleDateString("fr-CA", {
                 day: "2-digit",
                 month: "short",
               })}</div>
@@ -716,7 +724,7 @@ function renderSemaine(data) {
     <div class="mandat-item">
       <div class="mandat-top">
         <div>
-          <div class="mandat-date">${new Date(m.date).toLocaleDateString("fr-CA", {
+          <div class="mandat-date">${new Date(m.date + "T00:00:00").toLocaleDateString("fr-CA", {
             day: "2-digit",
             month: "short",
           })} · ${escapeHtml(m.client_nom)}</div>
