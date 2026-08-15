@@ -264,6 +264,124 @@ async function renderPunchFlow() {
   }
 }
 
+// --- Correction du journal : modifier ou supprimer un pointage deja enregistre ---
+let editingPointageId = null;
+
+const TYPES_POINTAGE = [
+  { value: "depart_entrepot", label: "Départ de l'entrepôt" },
+  { value: "arrivee_client", label: "Arrivée chez un client" },
+  { value: "depart_client", label: "Départ de chez un client" },
+  { value: "retour_entrepot", label: "Retour à l'entrepôt" },
+];
+
+function labelOfPointage(type) {
+  return (TYPES_POINTAGE.find((t) => t.value === type) || {}).label || type;
+}
+
+function toTimeInputValue(horodatage) {
+  const d = new Date(horodatage);
+  return `${pad2(d.getHours())}:${pad2(d.getMinutes())}`;
+}
+
+function renderPointageEditForm(p, clients) {
+  const typeOptions = TYPES_POINTAGE.map(
+    (t) => `<option value="${t.value}"${t.value === p.type ? " selected" : ""}>${t.label}</option>`
+  ).join("");
+  const clientOptions =
+    `<option value="">— Aucun client —</option>` +
+    clients
+      .map(
+        (c) =>
+          `<option value="${c.id}"${
+            String(c.id) === String(p.client_id) ? " selected" : ""
+          }>${escapeHtml(c.nom)}</option>`
+      )
+      .join("");
+  return `
+    <div class="journal-item-edit" data-pointage-id="${p.id}" data-original-horodatage="${p.horodatage}">
+      <div class="form-group">
+        <label class="form-label">Type</label>
+        <select class="form-select" data-field="type">${typeOptions}</select>
+      </div>
+      <div class="form-group">
+        <label class="form-label">Client (si applicable)</label>
+        <select class="form-select" data-field="client">${clientOptions}</select>
+      </div>
+      <div class="form-group">
+        <label class="form-label">Heure</label>
+        <input class="form-input" type="time" data-field="heure" value="${toTimeInputValue(p.horodatage)}">
+      </div>
+      <div class="journal-edit-actions">
+        <button class="btn btn-primary" data-action="enregistrer-pointage">Enregistrer</button>
+        <button class="btn btn-secondary" data-action="annuler-edit-pointage">Annuler</button>
+        <button class="btn btn-danger" data-action="supprimer-pointage">Supprimer ce pointage</button>
+      </div>
+    </div>
+  `;
+}
+
+function attachPointageEditHandlers() {
+  const editEl = stopsListEl.querySelector(".journal-item-edit");
+  if (!editEl) return;
+  const id = Number(editEl.dataset.pointageId);
+
+  editEl.querySelector('[data-action="annuler-edit-pointage"]').addEventListener("click", () => {
+    editingPointageId = null;
+    refreshJournal();
+  });
+
+  editEl.querySelector('[data-action="enregistrer-pointage"]').addEventListener("click", async (e) => {
+    const btn = e.target;
+    btn.disabled = true;
+    try {
+      const type = editEl.querySelector('[data-field="type"]').value;
+      const clientSelectVal = editEl.querySelector('[data-field="client"]').value;
+      const heureVal = editEl.querySelector('[data-field="heure"]').value;
+      if (!heureVal) {
+        alert("L'heure est requise.");
+        return;
+      }
+      const clientId = type === "arrivee_client" || type === "depart_client" ? clientSelectVal || null : null;
+
+      // Reconstruit l'horodatage complet : meme jour que le pointage d'origine, nouvelle heure.
+      const original = new Date(editEl.dataset.originalHorodatage);
+      const [hh, mm] = heureVal.split(":").map(Number);
+      const nouvelleDate = new Date(original.getFullYear(), original.getMonth(), original.getDate(), hh, mm, 0, 0);
+
+      const res = await fetch(`/api/pointages/${id}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ type, client_id: clientId, horodatage: nouvelleDate.toISOString() }),
+      });
+      if (!res.ok) throw new Error("Réponse " + res.status);
+      editingPointageId = null;
+      await refreshJournal();
+      await initPointageState(); // reconstruit le chrono/bouton a partir des pointages a jour
+    } catch (err) {
+      alert("Erreur : " + err.message);
+    } finally {
+      btn.disabled = false;
+    }
+  });
+
+  editEl.querySelector('[data-action="supprimer-pointage"]').addEventListener("click", async (e) => {
+    if (!confirm("Supprimer ce pointage ? Cette action est irréversible.")) return;
+    const btn = e.target;
+    btn.disabled = true;
+    try {
+      const res = await fetch(`/api/pointages/${id}`, { method: "DELETE" });
+      if (!res.ok) throw new Error("Réponse " + res.status);
+      editingPointageId = null;
+      await refreshJournal();
+      await initPointageState();
+    } catch (err) {
+      alert("Erreur : " + err.message);
+    } finally {
+      btn.disabled = false;
+    }
+  });
+}
+
 async function refreshJournal() {
   try {
     const res = await fetch("/api/pointages");
@@ -271,31 +389,35 @@ async function refreshJournal() {
     const pointages = await res.json();
     if (!pointages.length) {
       stopsListEl.innerHTML = `<div class="placeholder">Aucun pointage aujourd'hui.</div>`;
+      editingPointageId = null;
       return pointages;
     }
     const clients = await ensureClientsCache();
     const nomOf = (id) => (clients.find((c) => String(c.id) === String(id)) || {}).nom;
-    const labelOf = (type) =>
-      ({
-        depart_entrepot: "Départ de l'entrepôt",
-        arrivee_client: "Arrivée",
-        depart_client: "Départ",
-        retour_entrepot: "Retour à l'entrepôt",
-      }[type] || type);
     stopsListEl.innerHTML = pointages
       .map((p) => {
+        if (p.id === editingPointageId) {
+          return renderPointageEditForm(p, clients);
+        }
         const heure = new Date(p.horodatage).toLocaleTimeString("fr-CA", { hour: "2-digit", minute: "2-digit" });
         const sub = p.client_id ? nomOf(p.client_id) || "Client" : "";
         return `
-      <div class="journal-item">
+      <div class="journal-item journal-item-clickable" data-pointage-id="${p.id}">
         <div>
-          <div class="journal-item-label">${labelOf(p.type)}</div>
+          <div class="journal-item-label">${labelOfPointage(p.type)}</div>
           ${sub ? `<div class="journal-item-sub">${escapeHtml(sub)}</div>` : ""}
         </div>
         <div class="journal-item-time">${heure}</div>
       </div>`;
       })
       .join("");
+    stopsListEl.querySelectorAll(".journal-item-clickable").forEach((row) => {
+      row.addEventListener("click", () => {
+        editingPointageId = Number(row.dataset.pointageId);
+        refreshJournal();
+      });
+    });
+    attachPointageEditHandlers();
     return pointages;
   } catch (err) {
     stopsListEl.innerHTML = `<div class="placeholder">Impossible de charger le journal.<br>(${escapeHtml(
