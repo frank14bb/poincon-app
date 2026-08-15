@@ -9,6 +9,7 @@ tabs.forEach((tab) => {
     views.forEach((v) => v.classList.toggle("active", v.id === "view-" + name));
     if (name === "clients") loadClients();
     if (name === "reglages") loadReglages();
+    if (name === "semaine") loadSemaine();
   });
 });
 
@@ -644,6 +645,163 @@ async function saveReglages() {
   } catch (err) {
     msg.textContent = "Erreur : impossible d'enregistrer.";
   }
+}
+
+// --- Semaine (resume + export CSV) ---
+const semaineContent = document.getElementById("semaine-content");
+let semaineOffset = 0; // 0 = semaine courante, -1 = precedente, +1 = suivante
+
+function startOfWeek(date, semaineDebut) {
+  const d = new Date(date);
+  d.setHours(0, 0, 0, 0);
+  const day = d.getDay(); // 0 = dimanche ... 6 = samedi
+  const diff = semaineDebut === "lundi" ? (day === 0 ? 6 : day - 1) : day;
+  d.setDate(d.getDate() - diff);
+  return d;
+}
+
+function toISODateLocal(d) {
+  const y = d.getFullYear();
+  const m = String(d.getMonth() + 1).padStart(2, "0");
+  const day = String(d.getDate()).padStart(2, "0");
+  return `${y}-${m}-${day}`;
+}
+
+async function loadSemaine() {
+  semaineContent.innerHTML = `<div class="placeholder">Chargement…</div>`;
+  try {
+    const reglagesRes = await fetch("/api/reglages");
+    const reglages = reglagesRes.ok ? await reglagesRes.json() : {};
+    const semaineDebut = reglages.semaine_debut || "dimanche";
+
+    const base = new Date();
+    base.setDate(base.getDate() + semaineOffset * 7);
+    const debut = startOfWeek(base, semaineDebut);
+    const startIso = toISODateLocal(debut);
+
+    const res = await fetch(`/api/semaine?start=${startIso}`);
+    if (!res.ok) throw new Error("Réponse " + res.status);
+    const data = await res.json();
+    renderSemaine(data);
+  } catch (err) {
+    semaineContent.innerHTML = `<div class="placeholder">Impossible de charger la semaine.<br>(${escapeHtml(
+      err.message
+    )})</div>`;
+  }
+}
+
+function renderSemaine(data) {
+  const fmtCourt = (iso) => {
+    const d = new Date(iso + "T00:00:00");
+    return `${d.getDate()} ${mois[d.getMonth()]}`;
+  };
+
+  const joursHtml = data.jours
+    .map(
+      (j) => `
+    <div class="stop-item">
+      <div>
+        <div class="stop-name">${escapeHtml(j.label)}</div>
+        <div class="stop-sub">${j.pointages_count} pointage${j.pointages_count > 1 ? "s" : ""}</div>
+      </div>
+      <div class="stop-value">${heures(j.heures)}</div>
+    </div>`
+    )
+    .join("");
+
+  const mandatsHtml = data.mandats.length
+    ? data.mandats
+        .map(
+          (m) => `
+    <div class="mandat-item">
+      <div class="mandat-top">
+        <div>
+          <div class="mandat-date">${new Date(m.date).toLocaleDateString("fr-CA", {
+            day: "2-digit",
+            month: "short",
+          })} · ${escapeHtml(m.client_nom)}</div>
+          <div class="mandat-desc">${escapeHtml(m.description || "Mandat")}</div>
+        </div>
+        <div class="mandat-value">${argent(m.montant_facture)}</div>
+      </div>
+    </div>`
+        )
+        .join("")
+    : `<div class="placeholder">Aucun mandat facturé cette semaine.</div>`;
+
+  semaineContent.innerHTML = `
+    <div class="chrono-card" style="flex-direction:row;align-items:center;justify-content:space-between;padding:16px;">
+      <button class="btn-back" id="btn-semaine-prev">&larr; Préc.</button>
+      <div class="chrono-label" style="text-align:center;">${fmtCourt(data.start)} – ${fmtCourt(data.end)}</div>
+      <button class="btn-back" id="btn-semaine-next">Suiv. &rarr;</button>
+    </div>
+
+    <div class="client-stats" style="grid-template-columns:1fr 1fr;">
+      <div class="client-stat">
+        <div class="client-stat-label">Heures payées</div>
+        <div class="client-stat-value">${heures(data.total_heures)}</div>
+      </div>
+      <div class="client-stat">
+        <div class="client-stat-label">Facturé</div>
+        <div class="client-stat-value">${argent(data.total_facture)}</div>
+      </div>
+    </div>
+
+    <div class="section-title">Jours</div>
+    <div class="card list-card">${joursHtml}</div>
+
+    <div class="section-title">Mandats facturés</div>
+    <div class="card list-card">${mandatsHtml}</div>
+
+    <button class="btn btn-primary" id="btn-export-csv">Exporter en CSV</button>
+  `;
+
+  document.getElementById("btn-semaine-prev").addEventListener("click", () => {
+    semaineOffset -= 1;
+    loadSemaine();
+  });
+  document.getElementById("btn-semaine-next").addEventListener("click", () => {
+    semaineOffset += 1;
+    loadSemaine();
+  });
+  document.getElementById("btn-export-csv").addEventListener("click", () => exportSemaineCSV(data));
+}
+
+function csvEscape(val) {
+  const s = String(val ?? "");
+  return /[",\n]/.test(s) ? '"' + s.replace(/"/g, '""') + '"' : s;
+}
+
+function exportSemaineCSV(data) {
+  const lignes = [];
+  lignes.push(["Semaine du", data.start, "au", data.end].map(csvEscape).join(","));
+  lignes.push("");
+  lignes.push(["Jour", "Heures payées", "Pointages"].map(csvEscape).join(","));
+  data.jours.forEach((j) => {
+    lignes.push([j.label, j.heures, j.pointages_count].map(csvEscape).join(","));
+  });
+  lignes.push(["Total", data.total_heures, ""].map(csvEscape).join(","));
+  lignes.push("");
+  lignes.push(["Date", "Client", "Description", "Heures", "Montant facturé"].map(csvEscape).join(","));
+  data.mandats.forEach((m) => {
+    lignes.push(
+      [m.date, m.client_nom, m.description || "", m.duree_heures ?? "", m.montant_facture ?? ""]
+        .map(csvEscape)
+        .join(",")
+    );
+  });
+  lignes.push(["", "", "", "Total", data.total_facture].map(csvEscape).join(","));
+
+  const csv = "\uFEFF" + lignes.join("\r\n");
+  const blob = new Blob([csv], { type: "text/csv;charset=utf-8;" });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = `poincon-semaine-${data.start}.csv`;
+  document.body.appendChild(a);
+  a.click();
+  document.body.removeChild(a);
+  setTimeout(() => URL.revokeObjectURL(url), 1000);
 }
 
 initPointageState();
