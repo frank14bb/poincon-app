@@ -201,3 +201,47 @@ nav.tabbar {
 
 .tab-btn.active { color: var(--accent); }
 .tab-btn.active .tab-dot { background: var(--accent); }
+
+/* Clients */
+.btn-back {
+  background: none;
+  border: none;
+  color: var(--accent);
+  font-size: 14px;
+  font-weight: 600;
+  padding: 0;
+}
+
+.client-row {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 14px 16px;
+}
+.client-row + .client-row { border-top: 1px solid var(--border); }
+.client-row-name { font-weight: 600; font-size: 15px; }
+.client-row-sub { font-size: 12px; color: var(--text-dim); margin-top: 2px; }
+.client-row-value { text-align: right; }
+.client-row-hours { font-weight: 700; color: var(--accent); font-variant-numeric: tabular-nums; }
+.client-row-trip { font-size: 11px; color: var(--text-dim); margin-top: 2px; }
+
+.client-stats {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 10px;
+  margin: 16px 0;
+}
+.client-stat { background: var(--card); border: 1px solid var(--border); border-radius: var(--radius-sm); padding: 12px; }
+.client-stat-label { font-size: 11px; color: var(--text-dim); text-transform: uppercase; letter-spacing: 0.02em; }
+.client-stat-value { font-size: 18px; font-weight: 800; color: var(--accent); margin-top: 4px; font-variant-numeric: tabular-nums; }
+
+.client-name-header { font-size: 22px; font-weight: 800; margin: 8px 0 2px; }
+.client-address-header { font-size: 13px; color: var(--text-dim); margin-bottom: 4px; }
+
+.mandat-item { padding: 14px 16px; }
+.mandat-item + .mandat-item { border-top: 1px solid var(--border); }
+.mandat-top { display: flex; justify-content: space-between; }
+.mandat-date { font-size: 11px; color: var(--text-dim); text-transform: uppercase; }
+.mandat-desc { font-weight: 600; font-size: 14px; margin-top: 2px; }
+.mandat-value { font-weight: 700; color: var(--accent); }
+.mandat-meta { font-size: 12px; color: var(--text-dim); margin-top: 4px; }
