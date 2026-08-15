@@ -8,6 +8,7 @@ tabs.forEach((tab) => {
     tabs.forEach((t) => t.classList.toggle("active", t === tab));
     views.forEach((v) => v.classList.toggle("active", v.id === "view-" + name));
     if (name === "clients") loadClients();
+    if (name === "reglages") loadReglages();
   });
 });
 
@@ -193,6 +194,103 @@ function escapeHtml(str) {
     '"': "&quot;",
     "'": "&#39;",
   }[c]));
+}
+
+// --- Réglages (donnees reelles, via l'API branchee sur Netlify DB) ---
+const reglagesContent = document.getElementById("reglages-content");
+let reglagesLoaded = false;
+
+async function loadReglages(force) {
+  if (reglagesLoaded && !force) return;
+  reglagesContent.innerHTML = `<div class="placeholder">Chargement…</div>`;
+  try {
+    const res = await fetch("/api/reglages");
+    if (!res.ok) throw new Error("Réponse " + res.status);
+    const r = await res.json();
+    reglagesLoaded = true;
+
+    reglagesContent.innerHTML = `
+      <div class="card" style="padding:16px;">
+        <div class="form-group">
+          <label class="form-label" for="reg-adresse">Adresse de l'entrepôt</label>
+          <input class="form-input" id="reg-adresse" type="text" value="${escapeHtml(r.adresse_entrepot || "")}">
+        </div>
+        <div class="form-group">
+          <label class="form-label" for="reg-arrondi">Arrondi du temps</label>
+          <select class="form-select" id="reg-arrondi">
+            <option value="15"${Number(r.arrondi_minutes) === 15 ? " selected" : ""}>15 minutes</option>
+            <option value="30"${Number(r.arrondi_minutes) === 30 ? " selected" : ""}>30 minutes</option>
+            <option value="60"${Number(r.arrondi_minutes) === 60 ? " selected" : ""}>60 minutes</option>
+          </select>
+        </div>
+        <div class="form-group">
+          <label class="form-label" for="reg-semaine">Début de semaine</label>
+          <select class="form-select" id="reg-semaine">
+            <option value="dimanche"${r.semaine_debut === "dimanche" ? " selected" : ""}>Dimanche</option>
+            <option value="lundi"${r.semaine_debut === "lundi" ? " selected" : ""}>Lundi</option>
+          </select>
+        </div>
+      </div>
+
+      <div class="card list-card" style="margin-top:16px;">
+        <div class="toggle-row">
+          <div>
+            <div class="toggle-row-label">Détection GPS</div>
+            <div class="toggle-row-sub">Capture la position lors des pointages.</div>
+          </div>
+          <label class="switch">
+            <input type="checkbox" id="reg-gps"${r.detection_gps ? " checked" : ""}>
+            <span class="switch-track"></span>
+          </label>
+        </div>
+        <div class="toggle-row">
+          <div>
+            <div class="toggle-row-label">Trajets calculés</div>
+            <div class="toggle-row-sub">Calcule automatiquement le temps de trajet vers les clients.</div>
+          </div>
+          <label class="switch">
+            <input type="checkbox" id="reg-trajets"${r.trajets_calcules ? " checked" : ""}>
+            <span class="switch-track"></span>
+          </label>
+        </div>
+      </div>
+
+      <button class="btn btn-primary" id="btn-save-reglages" style="margin-top:16px;">Enregistrer</button>
+      <div class="save-msg" id="reglages-save-msg"></div>
+    `;
+
+    document.getElementById("btn-save-reglages").addEventListener("click", saveReglages);
+  } catch (err) {
+    reglagesContent.innerHTML = `<div class="placeholder">Impossible de charger les réglages pour l'instant.<br>(${escapeHtml(
+      err.message
+    )})</div>`;
+  }
+}
+
+async function saveReglages() {
+  const msg = document.getElementById("reglages-save-msg");
+  const payload = {
+    adresse_entrepot: document.getElementById("reg-adresse").value,
+    arrondi_minutes: Number(document.getElementById("reg-arrondi").value),
+    semaine_debut: document.getElementById("reg-semaine").value,
+    detection_gps: document.getElementById("reg-gps").checked,
+    trajets_calcules: document.getElementById("reg-trajets").checked,
+  };
+  msg.textContent = "Enregistrement…";
+  try {
+    const res = await fetch("/api/reglages", {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(payload),
+    });
+    if (!res.ok) throw new Error("Réponse " + res.status);
+    msg.textContent = "Réglages enregistrés";
+    setTimeout(() => {
+      msg.textContent = "";
+    }, 2500);
+  } catch (err) {
+    msg.textContent = "Erreur : impossible d'enregistrer.";
+  }
 }
 
 // --- Service worker (rend l'app installable et utilisable hors ligne) ---
