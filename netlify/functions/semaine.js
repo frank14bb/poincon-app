@@ -31,7 +31,7 @@ export default async (req) => {
     `;
 
     const mandats = await db.sql`
-      SELECT m.id, m.date, m.description, m.duree_heures, m.montant_facture, c.nom AS client_nom
+      SELECT m.id, m.date, m.description, m.duree_heures, c.nom AS client_nom
       FROM mandats m
       JOIN clients c ON c.id = m.client_id
       WHERE m.date >= ${start}::date
@@ -82,7 +82,6 @@ export default async (req) => {
     });
 
     const totalMinutes = jours.reduce((s, j) => s + j.minutes, 0);
-    const totalFacture = mandats.reduce((s, m) => s + Number(m.montant_facture || 0), 0);
 
     const end = new Date(start + "T00:00:00Z");
     end.setUTCDate(end.getUTCDate() + 6);
@@ -94,7 +93,6 @@ export default async (req) => {
         jours,
         total_minutes: totalMinutes,
         total_heures: Math.round((totalMinutes / 60) * 100) / 100,
-        total_facture: totalFacture,
         mandats,
       }),
       { headers: { "Content-Type": "application/json" } }
