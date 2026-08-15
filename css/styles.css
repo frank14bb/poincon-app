@@ -245,3 +245,70 @@ nav.tabbar {
 .mandat-desc { font-weight: 600; font-size: 14px; margin-top: 2px; }
 .mandat-value { font-weight: 700; color: var(--accent); }
 .mandat-meta { font-size: 12px; color: var(--text-dim); margin-top: 4px; }
+
+/* Réglages */
+.form-group { margin-bottom: 14px; }
+.form-group:last-child { margin-bottom: 0; }
+.form-label {
+  display: block;
+  font-size: 12px;
+  color: var(--text-dim);
+  margin-bottom: 6px;
+  text-transform: uppercase;
+  letter-spacing: 0.02em;
+}
+.form-input, .form-select {
+  width: 100%;
+  background: var(--card-2);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  padding: 12px 14px;
+  color: var(--text);
+  font-size: 15px;
+  font-family: inherit;
+}
+.form-input:focus, .form-select:focus { outline: none; border-color: var(--accent); }
+
+.toggle-row {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 14px 16px;
+  gap: 12px;
+}
+.toggle-row + .toggle-row { border-top: 1px solid var(--border); }
+.toggle-row-label { font-size: 14px; font-weight: 600; }
+.toggle-row-sub { font-size: 12px; color: var(--text-dim); margin-top: 2px; }
+
+.switch { position: relative; width: 46px; height: 26px; flex-shrink: 0; }
+.switch input { opacity: 0; width: 0; height: 0; position: absolute; }
+.switch-track {
+  position: absolute;
+  inset: 0;
+  background: var(--card-2);
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  transition: background 0.15s;
+  cursor: pointer;
+}
+.switch-track::before {
+  content: "";
+  position: absolute;
+  width: 20px;
+  height: 20px;
+  left: 2px;
+  top: 2px;
+  background: var(--text-dim);
+  border-radius: 50%;
+  transition: transform 0.15s, background 0.15s;
+}
+.switch input:checked + .switch-track { background: var(--accent-dim); border-color: var(--accent); }
+.switch input:checked + .switch-track::before { transform: translateX(20px); background: var(--accent); }
+
+.save-msg {
+  font-size: 12px;
+  color: var(--accent);
+  text-align: center;
+  padding: 6px 0 0;
+  min-height: 16px;
+}
