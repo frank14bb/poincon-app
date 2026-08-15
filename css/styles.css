@@ -212,6 +212,15 @@ nav.tabbar {
   padding: 0;
 }
 
+.btn-add-client {
+  background: none;
+  border: none;
+  color: var(--accent);
+  font-size: 13px;
+  font-weight: 700;
+  padding: 0;
+}
+
 .client-row {
   display: flex;
   justify-content: space-between;
