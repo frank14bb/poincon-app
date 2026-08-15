@@ -25,40 +25,18 @@
 
     <div class="chrono-card">
       <div>
-        <div class="chrono-label">Heures payées — entrepôt à entrepôt</div>
+        <div class="chrono-label" id="chrono-label">Heures payées — entrepôt à entrepôt</div>
         <div class="chrono-time" id="chrono-time">00:00:00</div>
         <div class="chrono-sub" id="chrono-sub">Le compteur démarre au moment où tu quittes l'entrepôt.</div>
-      </div>
-      <div class="btn-row">
-        <button class="btn" id="btn-pause">Pause</button>
-        <button class="btn" id="btn-note">Note</button>
       </div>
       <button class="btn btn-primary" id="btn-punch">Départ de l'entrepôt</button>
     </div>
 
-    <div class="section-title">Prévu aujourd'hui</div>
+    <div id="punch-flow"></div>
+
+    <div class="section-title">Aujourd'hui</div>
     <div class="card list-card" id="stops-list">
-      <div class="stop-item">
-        <div>
-          <div class="stop-name">Clinique Dentaire Roy</div>
-          <div class="stop-sub">1240 rue Saint-Zotique E.</div>
-        </div>
-        <div class="stop-value">07:15</div>
-      </div>
-      <div class="stop-item">
-        <div>
-          <div class="stop-name">Copropriété Lafontaine</div>
-          <div class="stop-sub">09:40 &middot; 22 min de l'entrepôt</div>
-        </div>
-        <div class="stop-value">09:30</div>
-      </div>
-      <div class="stop-item">
-        <div>
-          <div class="stop-name">Résidence Beaulieu</div>
-          <div class="stop-sub">78 rue Fabre</div>
-        </div>
-        <div class="stop-value">13:00</div>
-      </div>
+      <div class="placeholder">Aucun pointage aujourd'hui.</div>
     </div>
   </section>
 
