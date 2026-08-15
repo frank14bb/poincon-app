@@ -64,10 +64,21 @@
 
   <!-- ÉCRAN: CLIENTS -->
   <section id="view-clients" class="view">
-    <div class="view-header">
-      <span class="view-title">Clients</span>
+    <div id="clients-list-panel">
+      <div class="view-header">
+        <span class="view-title">Clients</span>
+      </div>
+      <div class="card list-card" id="clients-list">
+        <div class="placeholder">Chargement…</div>
+      </div>
     </div>
-    <div class="placeholder">L'écran Clients (liste + fiche) arrive à la Phase 5.<br>La structure est prête à le recevoir.</div>
+
+    <div id="clients-detail-panel" style="display:none;">
+      <div class="view-header">
+        <button class="btn-back" id="btn-client-back">&larr; Clients</button>
+      </div>
+      <div id="client-detail-content"></div>
+    </div>
   </section>
 
   <!-- ÉCRAN: SEMAINE -->
