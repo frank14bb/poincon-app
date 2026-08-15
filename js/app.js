@@ -492,6 +492,81 @@ async function loadClients(force) {
   }
 }
 
+// --- Ajout manuel d'un client depuis l'écran Clients (sans passer par un pointage) ---
+const btnAddClient = document.getElementById("btn-add-client");
+const addClientCard = document.getElementById("add-client-card");
+let addClientFormOpen = false;
+
+function renderAddClientForm() {
+  if (!addClientFormOpen) {
+    addClientCard.style.display = "none";
+    addClientCard.innerHTML = "";
+    return;
+  }
+  addClientCard.style.display = "block";
+  addClientCard.innerHTML = `
+    <div class="card" style="padding:16px;">
+      <div class="section-title" style="margin-bottom:10px;">Nouveau client</div>
+      <div class="inline-form">
+        <div class="form-group">
+          <label class="form-label" for="add-client-nom">Nom du client</label>
+          <input class="form-input" id="add-client-nom" type="text" placeholder="Ex : Dépanneur Villeray">
+        </div>
+        <div class="form-group">
+          <label class="form-label" for="add-client-adresse">Adresse</label>
+          <input class="form-input" id="add-client-adresse" type="text" placeholder="Ex : 123 rue Principale">
+        </div>
+        <button class="btn btn-primary" data-action="confirmer-ajout-client">Créer le client</button>
+        <button class="btn btn-secondary" data-action="annuler-ajout-client">Annuler</button>
+      </div>
+    </div>
+  `;
+}
+
+btnAddClient.addEventListener("click", () => {
+  addClientFormOpen = !addClientFormOpen;
+  renderAddClientForm();
+  if (addClientFormOpen) {
+    document.getElementById("add-client-nom").focus();
+  }
+});
+
+addClientCard.addEventListener("click", async (e) => {
+  const target = e.target.closest("[data-action]");
+  if (!target) return;
+  const action = target.dataset.action;
+
+  if (action === "annuler-ajout-client") {
+    addClientFormOpen = false;
+    renderAddClientForm();
+  } else if (action === "confirmer-ajout-client") {
+    const nom = document.getElementById("add-client-nom").value.trim();
+    const adresse = document.getElementById("add-client-adresse").value.trim();
+    if (!nom) {
+      alert("Le nom du client est requis.");
+      return;
+    }
+    target.disabled = true;
+    try {
+      const res = await fetch("/api/clients", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ nom, adresse }),
+      });
+      if (!res.ok) throw new Error("Réponse " + res.status);
+      addClientFormOpen = false;
+      renderAddClientForm();
+      clientsCache = null;
+      clientsLoaded = false;
+      await loadClients(true);
+    } catch (err) {
+      alert("Impossible de créer le client : " + err.message);
+    } finally {
+      target.disabled = false;
+    }
+  }
+});
+
 async function openClient(id) {
   clientsListPanel.style.display = "none";
   clientsDetailPanel.style.display = "block";
