@@ -1,0 +1,100 @@
+<!DOCTYPE html>
+<html lang="fr-CA">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, maximum-scale=1, user-scalable=no">
+<title>Poinçon</title>
+<meta name="theme-color" content="#0a0a0a">
+<link rel="manifest" href="/manifest.json">
+<link rel="apple-touch-icon" href="/icons/icon-192.png">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="apple-mobile-web-app-title" content="Poinçon">
+<link rel="stylesheet" href="/css/styles.css">
+</head>
+<body>
+
+<div id="app">
+
+  <!-- ÉCRAN: POINÇON -->
+  <section id="view-poincon" class="view active">
+    <div class="view-header">
+      <span class="view-title" id="today-label">—</span>
+      <span class="badge" id="status-badge">Pas encore parti</span>
+    </div>
+
+    <div class="chrono-card">
+      <div>
+        <div class="chrono-label">Heures payées — entrepôt à entrepôt</div>
+        <div class="chrono-time" id="chrono-time">00:00:00</div>
+        <div class="chrono-sub" id="chrono-sub">Le compteur démarre au moment où tu quittes l'entrepôt.</div>
+      </div>
+      <div class="btn-row">
+        <button class="btn" id="btn-pause">Pause</button>
+        <button class="btn" id="btn-note">Note</button>
+      </div>
+      <button class="btn btn-primary" id="btn-punch">Départ de l'entrepôt</button>
+    </div>
+
+    <div class="section-title">Prévu aujourd'hui</div>
+    <div class="card list-card" id="stops-list">
+      <div class="stop-item">
+        <div>
+          <div class="stop-name">Clinique Dentaire Roy</div>
+          <div class="stop-sub">1240 rue Saint-Zotique E.</div>
+        </div>
+        <div class="stop-value">07:15</div>
+      </div>
+      <div class="stop-item">
+        <div>
+          <div class="stop-name">Copropriété Lafontaine</div>
+          <div class="stop-sub">09:40 &middot; 22 min de l'entrepôt</div>
+        </div>
+        <div class="stop-value">09:30</div>
+      </div>
+      <div class="stop-item">
+        <div>
+          <div class="stop-name">Résidence Beaulieu</div>
+          <div class="stop-sub">78 rue Fabre</div>
+        </div>
+        <div class="stop-value">13:00</div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ÉCRAN: CLIENTS -->
+  <section id="view-clients" class="view">
+    <div class="view-header">
+      <span class="view-title">Clients</span>
+    </div>
+    <div class="placeholder">L'écran Clients (liste + fiche) arrive à la Phase 5.<br>La structure est prête à le recevoir.</div>
+  </section>
+
+  <!-- ÉCRAN: SEMAINE -->
+  <section id="view-semaine" class="view">
+    <div class="view-header">
+      <span class="view-title">Semaine</span>
+    </div>
+    <div class="placeholder">Le résumé de la semaine et l'export CSV arrivent à la Phase 6.</div>
+  </section>
+
+  <!-- ÉCRAN: RÉGLAGES -->
+  <section id="view-reglages" class="view">
+    <div class="view-header">
+      <span class="view-title">Réglages</span>
+    </div>
+    <div class="placeholder">Les réglages (entrepôt, arrondi, etc.) arrivent à la Phase 7.</div>
+  </section>
+
+  <nav class="tabbar">
+    <button class="tab-btn active" data-view="poincon"><span class="tab-dot"></span>Poinçon</button>
+    <button class="tab-btn" data-view="clients"><span class="tab-dot"></span>Clients</button>
+    <button class="tab-btn" data-view="semaine"><span class="tab-dot"></span>Semaine</button>
+    <button class="tab-btn" data-view="reglages"><span class="tab-dot"></span>Réglages</button>
+  </nav>
+
+</div>
+
+<script src="/js/app.js"></script>
+</body>
+</html>
