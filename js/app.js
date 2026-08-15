@@ -30,7 +30,14 @@ const btnPunch = document.getElementById("btn-punch");
 const punchFlowEl = document.getElementById("punch-flow");
 const stopsListEl = document.getElementById("stops-list");
 
-let jourState = { status: "not_started", clientId: null, clientNom: null, dureeHeures: null, trajetMinutes: null };
+let jourState = {
+  status: "not_started",
+  clientId: null,
+  clientNom: null,
+  dureeHeures: null,
+  trajetMinutes: null,
+  dureeBaseMinutes: null,
+};
 let mainStartedAt = null;
 let subStartedAt = null;
 let mainTickHandle = null;
@@ -38,6 +45,13 @@ let subTickHandle = null;
 // Horodatage du dernier depart (de l'entrepot ou d'un client) : point de reference
 // pour mesurer le vrai temps de trajet vers le prochain arret.
 let lastDepartAt = null;
+// Mandat en attente de son trajet retour : au moment ou on quitte un client, on ne
+// connait pas encore le temps pour se rendre au prochain arret (client suivant ou
+// entrepot). On enregistre le mandat tout de suite avec une duree provisoire
+// (trajet aller + travail, minimum 1h), puis on la complete avec le trajet retour
+// des que le prochain arret est atteint.
+let lastMandatId = null;
+let lastMandatBaseMinutes = null;
 
 function pad2(n) {
   return String(n).padStart(2, "0");
@@ -119,6 +133,27 @@ async function postMandat(clientId, payload) {
   });
   if (!res.ok) throw new Error("Réponse " + res.status);
   return res.json();
+}
+
+// Complete la duree d'un mandat une fois le trajet retour connu (voir lastMandatId
+// plus haut). N'echoue jamais bruyamment : si ca rate, le mandat garde simplement sa
+// duree provisoire (trajet aller + travail, minimum 1h).
+async function completerTrajetRetour(minutesRetour) {
+  if (lastMandatId == null) return;
+  const id = lastMandatId;
+  const totalMinutes = (lastMandatBaseMinutes || 0) + Math.max(0, minutesRetour);
+  const dureeFinale = Math.round(Math.max(1, totalMinutes / 60) * 100) / 100;
+  lastMandatId = null;
+  lastMandatBaseMinutes = null;
+  try {
+    await fetch(`/api/mandats/${id}`, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ duree_heures: dureeFinale }),
+    });
+  } catch (err) {
+    // Pas grave : le mandat garde sa duree provisoire.
+  }
 }
 
 function updatePunchButton() {
@@ -214,7 +249,7 @@ async function renderPunchFlow() {
     punchFlowEl.innerHTML = `
       <div class="card" style="padding:16px;">
         <div class="section-title" style="margin-bottom:2px;">Résumé du mandat — ${escapeHtml(jourState.clientNom || "")}</div>
-        <div class="chrono-sub" style="margin-bottom:10px;">Durée du mandat (trajet inclus, minimum 1 h) : ${heures(jourState.dureeHeures)}</div>
+        <div class="chrono-sub" style="margin-bottom:10px;">Durée provisoire (trajet aller + travail, minimum 1 h) : ${heures(jourState.dureeHeures)}<br>Le trajet retour s'ajoutera automatiquement à ton prochain départ.</div>
         <div class="inline-form">
           <div class="form-group">
             <label class="form-label" for="mandat-desc">Description</label>
@@ -283,7 +318,9 @@ btnPunch.addEventListener("click", async () => {
       await renderPunchFlow();
       await refreshJournal();
     } else if (jourState.status === "en_route") {
+      const minutesRetour = lastDepartAt ? Math.max(0, Math.round((Date.now() - lastDepartAt) / 60000)) : 0;
       await postPointage("retour_entrepot", null);
+      await completerTrajetRetour(minutesRetour);
       stopMainTick();
       lastDepartAt = null;
       jourState.status = "not_started";
@@ -312,6 +349,8 @@ punchFlowEl.addEventListener("click", async (e) => {
       jourState.trajetMinutes = lastDepartAt
         ? Math.max(0, Math.round((subStartedAt - lastDepartAt) / 60000))
         : 0;
+      // Ce trajet est aussi le trajet retour du mandat precedent (meme deplacement).
+      await completerTrajetRetour(jourState.trajetMinutes);
       jourState.status = "chez_client";
       jourState.clientId = clientId;
       jourState.clientNom = clientNom;
@@ -345,6 +384,8 @@ punchFlowEl.addEventListener("click", async (e) => {
       jourState.trajetMinutes = lastDepartAt
         ? Math.max(0, Math.round((subStartedAt - lastDepartAt) / 60000))
         : 0;
+      // Ce trajet est aussi le trajet retour du mandat precedent (meme deplacement).
+      await completerTrajetRetour(jourState.trajetMinutes);
       jourState.status = "chez_client";
       jourState.clientId = client.id;
       jourState.clientNom = client.nom;
@@ -353,11 +394,14 @@ punchFlowEl.addEventListener("click", async (e) => {
       await refreshJournal();
     } else if (action === "terminer-client") {
       await postPointage("depart_client", jourState.clientId);
-      // Duree du mandat = temps de trajet pour se rendre chez le client + temps sur
-      // place (mesures reels, pas estimes), avec un minimum de 1 h, trajet inclus.
-      const heuresChezClient = subStartedAt ? (Date.now() - subStartedAt) / 3600000 : 0;
-      const heuresTrajet = (jourState.trajetMinutes || 0) / 60;
-      jourState.dureeHeures = Math.round(Math.max(1, heuresChezClient + heuresTrajet) * 100) / 100;
+      // Duree provisoire du mandat = trajet aller + temps sur place (mesures reels),
+      // avec un minimum de 1 h. Le trajet retour n'est pas encore connu (on ne sait
+      // pas encore quand on arrivera au prochain arret) : il sera ajoute des que ce
+      // prochain arret sera atteint, via completerTrajetRetour().
+      const minutesChezClient = subStartedAt ? (Date.now() - subStartedAt) / 60000 : 0;
+      const minutesTrajetAller = jourState.trajetMinutes || 0;
+      jourState.dureeBaseMinutes = minutesTrajetAller + minutesChezClient;
+      jourState.dureeHeures = Math.round(Math.max(1, jourState.dureeBaseMinutes / 60) * 100) / 100;
       lastDepartAt = Date.now();
       stopSubTick();
       jourState.status = "mandat_form";
@@ -366,15 +410,18 @@ punchFlowEl.addEventListener("click", async (e) => {
       await refreshJournal();
     } else if (action === "enregistrer-mandat") {
       const description = document.getElementById("mandat-desc").value.trim();
-      await postMandat(jourState.clientId, {
+      const mandat = await postMandat(jourState.clientId, {
         description: description || null,
         duree_heures: jourState.dureeHeures,
       });
+      lastMandatId = mandat.id;
+      lastMandatBaseMinutes = jourState.dureeBaseMinutes;
       jourState.status = "en_route";
       jourState.clientId = null;
       jourState.clientNom = null;
       jourState.dureeHeures = null;
       jourState.trajetMinutes = null;
+      jourState.dureeBaseMinutes = null;
       clientsLoaded = false;
       updatePunchButton();
       await renderPunchFlow();
@@ -384,6 +431,7 @@ punchFlowEl.addEventListener("click", async (e) => {
       jourState.clientNom = null;
       jourState.dureeHeures = null;
       jourState.trajetMinutes = null;
+      jourState.dureeBaseMinutes = null;
       updatePunchButton();
       await renderPunchFlow();
     }
