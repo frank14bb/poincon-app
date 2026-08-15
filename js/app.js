@@ -30,11 +30,14 @@ const btnPunch = document.getElementById("btn-punch");
 const punchFlowEl = document.getElementById("punch-flow");
 const stopsListEl = document.getElementById("stops-list");
 
-let jourState = { status: "not_started", clientId: null, clientNom: null, dureeHeures: null };
+let jourState = { status: "not_started", clientId: null, clientNom: null, dureeHeures: null, trajetMinutes: null };
 let mainStartedAt = null;
 let subStartedAt = null;
 let mainTickHandle = null;
 let subTickHandle = null;
+// Horodatage du dernier depart (de l'entrepot ou d'un client) : point de reference
+// pour mesurer le vrai temps de trajet vers le prochain arret.
+let lastDepartAt = null;
 
 function pad2(n) {
   return String(n).padStart(2, "0");
@@ -211,15 +214,11 @@ async function renderPunchFlow() {
     punchFlowEl.innerHTML = `
       <div class="card" style="padding:16px;">
         <div class="section-title" style="margin-bottom:2px;">Résumé du mandat — ${escapeHtml(jourState.clientNom || "")}</div>
-        <div class="chrono-sub" style="margin-bottom:10px;">Durée mesurée chez le client : ${heures(jourState.dureeHeures)}</div>
+        <div class="chrono-sub" style="margin-bottom:10px;">Durée du mandat (trajet inclus, minimum 1 h) : ${heures(jourState.dureeHeures)}</div>
         <div class="inline-form">
           <div class="form-group">
             <label class="form-label" for="mandat-desc">Description</label>
             <input class="form-input" id="mandat-desc" type="text" placeholder="Ex : Diagnostic fuite colonne montante">
-          </div>
-          <div class="form-group">
-            <label class="form-label" for="mandat-montant">Montant facturé ($)</label>
-            <input class="form-input" id="mandat-montant" type="number" step="0.01" placeholder="0.00">
           </div>
           <button class="btn btn-primary" data-action="enregistrer-mandat">Enregistrer le mandat</button>
           <button class="btn btn-secondary" data-action="passer-mandat">Passer</button>
@@ -277,6 +276,7 @@ btnPunch.addEventListener("click", async () => {
     if (jourState.status === "not_started") {
       await postPointage("depart_entrepot", null);
       mainStartedAt = Date.now();
+      lastDepartAt = mainStartedAt;
       startMainTick();
       jourState.status = "en_route";
       updatePunchButton();
@@ -285,6 +285,7 @@ btnPunch.addEventListener("click", async () => {
     } else if (jourState.status === "en_route") {
       await postPointage("retour_entrepot", null);
       stopMainTick();
+      lastDepartAt = null;
       jourState.status = "not_started";
       updatePunchButton();
       await renderPunchFlow();
@@ -308,6 +309,9 @@ punchFlowEl.addEventListener("click", async (e) => {
       const clientNom = target.dataset.clientNom;
       await postPointage("arrivee_client", clientId);
       subStartedAt = Date.now();
+      jourState.trajetMinutes = lastDepartAt
+        ? Math.max(0, Math.round((subStartedAt - lastDepartAt) / 60000))
+        : 0;
       jourState.status = "chez_client";
       jourState.clientId = clientId;
       jourState.clientNom = clientNom;
@@ -338,6 +342,9 @@ punchFlowEl.addEventListener("click", async (e) => {
       clientsLoaded = false;
       await postPointage("arrivee_client", client.id);
       subStartedAt = Date.now();
+      jourState.trajetMinutes = lastDepartAt
+        ? Math.max(0, Math.round((subStartedAt - lastDepartAt) / 60000))
+        : 0;
       jourState.status = "chez_client";
       jourState.clientId = client.id;
       jourState.clientNom = client.nom;
@@ -346,10 +353,12 @@ punchFlowEl.addEventListener("click", async (e) => {
       await refreshJournal();
     } else if (action === "terminer-client") {
       await postPointage("depart_client", jourState.clientId);
-      // Duree reelle chez le client (mesuree, pas estimee), pour l'historique du client.
-      jourState.dureeHeures = subStartedAt
-        ? Math.round(((Date.now() - subStartedAt) / 3600000) * 100) / 100
-        : null;
+      // Duree du mandat = temps de trajet pour se rendre chez le client + temps sur
+      // place (mesures reels, pas estimes), avec un minimum de 1 h, trajet inclus.
+      const heuresChezClient = subStartedAt ? (Date.now() - subStartedAt) / 3600000 : 0;
+      const heuresTrajet = (jourState.trajetMinutes || 0) / 60;
+      jourState.dureeHeures = Math.round(Math.max(1, heuresChezClient + heuresTrajet) * 100) / 100;
+      lastDepartAt = Date.now();
       stopSubTick();
       jourState.status = "mandat_form";
       updatePunchButton();
@@ -357,16 +366,15 @@ punchFlowEl.addEventListener("click", async (e) => {
       await refreshJournal();
     } else if (action === "enregistrer-mandat") {
       const description = document.getElementById("mandat-desc").value.trim();
-      const montant = document.getElementById("mandat-montant").value;
       await postMandat(jourState.clientId, {
         description: description || null,
-        montant_facture: montant ? Number(montant) : null,
         duree_heures: jourState.dureeHeures,
       });
       jourState.status = "en_route";
       jourState.clientId = null;
       jourState.clientNom = null;
       jourState.dureeHeures = null;
+      jourState.trajetMinutes = null;
       clientsLoaded = false;
       updatePunchButton();
       await renderPunchFlow();
@@ -375,6 +383,7 @@ punchFlowEl.addEventListener("click", async (e) => {
       jourState.clientId = null;
       jourState.clientNom = null;
       jourState.dureeHeures = null;
+      jourState.trajetMinutes = null;
       updatePunchButton();
       await renderPunchFlow();
     }
@@ -387,6 +396,7 @@ async function initPointageState() {
   const pointages = await refreshJournal();
   if (!pointages.length) {
     jourState.status = "not_started";
+    lastDepartAt = null;
     updatePunchButton();
     await renderPunchFlow();
     return;
@@ -398,6 +408,18 @@ async function initPointageState() {
   if (first.type === "depart_entrepot") {
     mainStartedAt = new Date(first.horodatage).getTime();
   }
+
+  // Reconstruit le point de depart du trajet en cours (entrepot ou dernier client
+  // quitte), pour pouvoir mesurer correctement le temps de trajet meme apres un
+  // rafraichissement de la page.
+  lastDepartAt = null;
+  for (let i = pointages.length - 1; i >= 0; i--) {
+    if (pointages[i].type === "depart_entrepot" || pointages[i].type === "depart_client") {
+      lastDepartAt = new Date(pointages[i].horodatage).getTime();
+      break;
+    }
+  }
+
   if (last.type === "retour_entrepot") {
     jourState.status = "not_started";
   } else if (last.type === "arrivee_client") {
@@ -405,6 +427,9 @@ async function initPointageState() {
     jourState.clientId = last.client_id;
     jourState.clientNom = nomOf(last.client_id) || "Client";
     subStartedAt = new Date(last.horodatage).getTime();
+    jourState.trajetMinutes = lastDepartAt
+      ? Math.max(0, Math.round((subStartedAt - lastDepartAt) / 60000))
+      : 0;
     startMainTick();
   } else {
     jourState.status = "en_route";
@@ -437,9 +462,6 @@ async function ensureClientsCache() {
 
 function heures(n) {
   return (Math.round((n || 0) * 10) / 10).toLocaleString("fr-CA") + " h";
-}
-function argent(n) {
-  return (n || 0).toLocaleString("fr-CA", { style: "currency", currency: "CAD" });
 }
 
 // Convertit une valeur "date seulement" venant de l'API (ex: "2026-08-15" ou
@@ -591,9 +613,7 @@ async function openClient(id) {
             </div>
             <div class="mandat-value">${heures(m.duree_heures)}</div>
           </div>
-          <div class="mandat-meta">${argent(m.montant_facture)}${
-              m.nb_photos ? " · " + m.nb_photos + " photos" : ""
-            }</div>
+          ${m.nb_photos ? `<div class="mandat-meta">${m.nb_photos} photos</div>` : ""}
         </div>`
           )
           .join("")
@@ -604,8 +624,8 @@ async function openClient(id) {
       <div class="client-address-header">${escapeHtml(c.adresse || "")}</div>
       <div class="client-stats">
         <div class="client-stat">
-          <div class="client-stat-label">Facturé</div>
-          <div class="client-stat-value">${argent(c.total_facture)}</div>
+          <div class="client-stat-label">Heures</div>
+          <div class="client-stat-value">${heures(c.total_heures)}</div>
         </div>
         <div class="client-stat">
           <div class="client-stat-label">Mandats</div>
@@ -813,12 +833,12 @@ function renderSemaine(data) {
           })} · ${escapeHtml(m.client_nom)}</div>
           <div class="mandat-desc">${escapeHtml(m.description || "Mandat")}</div>
         </div>
-        <div class="mandat-value">${argent(m.montant_facture)}</div>
+        <div class="mandat-value">${heures(m.duree_heures)}</div>
       </div>
     </div>`
         )
         .join("")
-    : `<div class="placeholder">Aucun mandat facturé cette semaine.</div>`;
+    : `<div class="placeholder">Aucun mandat cette semaine.</div>`;
 
   semaineContent.innerHTML = `
     <div class="chrono-card" style="flex-direction:row;align-items:center;justify-content:space-between;padding:16px;">
@@ -833,15 +853,15 @@ function renderSemaine(data) {
         <div class="client-stat-value">${heures(data.total_heures)}</div>
       </div>
       <div class="client-stat">
-        <div class="client-stat-label">Facturé</div>
-        <div class="client-stat-value">${argent(data.total_facture)}</div>
+        <div class="client-stat-label">Mandats</div>
+        <div class="client-stat-value">${data.mandats.length}</div>
       </div>
     </div>
 
     <div class="section-title">Jours</div>
     <div class="card list-card">${joursHtml}</div>
 
-    <div class="section-title">Mandats facturés</div>
+    <div class="section-title">Mandats</div>
     <div class="card list-card">${mandatsHtml}</div>
 
     <button class="btn btn-primary" id="btn-export-csv">Exporter en CSV</button>
@@ -873,15 +893,14 @@ function exportSemaineCSV(data) {
   });
   lignes.push(["Total", data.total_heures, ""].map(csvEscape).join(","));
   lignes.push("");
-  lignes.push(["Date", "Client", "Description", "Heures", "Montant facturé"].map(csvEscape).join(","));
+  lignes.push(["Date", "Client", "Description", "Heures"].map(csvEscape).join(","));
   data.mandats.forEach((m) => {
     lignes.push(
-      [m.date, m.client_nom, m.description || "", m.duree_heures ?? "", m.montant_facture ?? ""]
+      [m.date, m.client_nom, m.description || "", m.duree_heures ?? ""]
         .map(csvEscape)
         .join(",")
     );
   });
-  lignes.push(["", "", "", "Total", data.total_facture].map(csvEscape).join(","));
 
   const csv = "\uFEFF" + lignes.join("\r\n");
   const blob = new Blob([csv], { type: "text/csv;charset=utf-8;" });
