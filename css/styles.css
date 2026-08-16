@@ -75,6 +75,27 @@ body {
   letter-spacing: 0.02em;
 }
 
+/* Mode hors ligne (Phase 8) */
+.badge-offline {
+  display: inline-block;
+  color: var(--danger);
+  background: rgba(224, 90, 78, 0.15);
+  align-self: flex-start;
+  margin-top: -4px;
+}
+
+.journal-item-pending { opacity: 0.65; }
+
+.pending-tag {
+  display: block;
+  font-size: 10px;
+  font-weight: 700;
+  color: var(--danger);
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+  margin-top: 2px;
+}
+
 .card {
   background: var(--card);
   border: 1px solid var(--border);
