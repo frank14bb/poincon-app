@@ -79,8 +79,12 @@ export default async (req) => {
         });
       }
       const [client] = await db.sql`
-        INSERT INTO clients (nom, adresse, telephone)
-        VALUES (${body.nom}, ${body.adresse || null}, ${body.telephone || null})
+        INSERT INTO clients (nom, adresse, telephone, client_uuid)
+        VALUES (${body.nom}, ${body.adresse || null}, ${body.telephone || null}, ${body.client_uuid || null})
+        ON CONFLICT (client_uuid) DO UPDATE SET
+          nom = EXCLUDED.nom,
+          adresse = EXCLUDED.adresse,
+          telephone = EXCLUDED.telephone
         RETURNING *
       `;
       return new Response(JSON.stringify(client), {

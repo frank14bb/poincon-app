@@ -15,9 +15,18 @@ export default async (req) => {
           headers: { "Content-Type": "application/json" },
         });
       }
+      // date : le jour reel du mandat (utile si enregistre hors ligne pres de minuit
+      // et synchronise seulement le lendemain) ; par defaut la date du serveur.
+      const date = body.date || new Date().toISOString().slice(0, 10);
       const [mandat] = await db.sql`
-        INSERT INTO mandats (client_id, description, duree_heures, notes)
-        VALUES (${body.client_id}, ${body.description || null}, ${body.duree_heures ?? null}, ${body.notes || null})
+        INSERT INTO mandats (client_id, description, duree_heures, notes, date, client_uuid)
+        VALUES (${body.client_id}, ${body.description || null}, ${body.duree_heures ?? null}, ${body.notes || null}, ${date}, ${body.client_uuid || null})
+        ON CONFLICT (client_uuid) DO UPDATE SET
+          client_id = EXCLUDED.client_id,
+          description = EXCLUDED.description,
+          duree_heures = EXCLUDED.duree_heures,
+          notes = EXCLUDED.notes,
+          date = EXCLUDED.date
         RETURNING *
       `;
       return new Response(JSON.stringify(mandat), {
