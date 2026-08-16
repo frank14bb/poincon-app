@@ -29,6 +29,22 @@ const statusBadge = document.getElementById("status-badge");
 const btnPunch = document.getElementById("btn-punch");
 const punchFlowEl = document.getElementById("punch-flow");
 const stopsListEl = document.getElementById("stops-list");
+const syncBadge = document.getElementById("sync-badge");
+
+// --- Indicateur "hors ligne / en attente de synchronisation" ---------------
+Offline.onChange(({ pending, online, syncing }) => {
+  if (!online) {
+    syncBadge.style.display = "";
+    syncBadge.textContent = pending ? `Hors ligne · ${pending} en attente` : "Hors ligne";
+  } else if (pending > 0) {
+    syncBadge.style.display = "";
+    syncBadge.textContent = syncing ? "Synchronisation…" : `${pending} en attente de synchronisation`;
+  } else {
+    syncBadge.style.display = "none";
+  }
+});
+window.addEventListener("online", () => Offline.notify());
+window.addEventListener("offline", () => Offline.notify());
 
 let jourState = {
   status: "not_started",
@@ -109,51 +125,78 @@ function getPosition() {
   });
 }
 
-async function postPointage(type, clientId) {
+// --- Ecriture des donnees : toujours "local d'abord" -----------------------
+// Chaque action est enregistree immediatement dans IndexedDB (via Offline),
+// avec un identifiant genere sur le telephone, puis mise en file d'attente
+// pour etre envoyee des que possible. Ca marche exactement pareil que la
+// connexion soit presente ou non : quand elle l'est, la synchronisation est
+// quasi instantanee ; quand elle ne l'est pas, rien n'est perdu et tout se
+// rattrape automatiquement au retour du reseau (voir js/offline.js).
+
+async function queuePointage(type, clientId) {
   const pos = await getPosition();
-  const res = await fetch("/api/pointages", {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({
-      type,
-      client_id: clientId || null,
-      latitude: pos ? pos.latitude : null,
-      longitude: pos ? pos.longitude : null,
-    }),
+  const uuid = Offline.uuid();
+  const horodatage = new Date().toISOString();
+  const payload = {
+    uuid,
+    type,
+    client_id: clientId || null,
+    latitude: pos ? pos.latitude : null,
+    longitude: pos ? pos.longitude : null,
+    horodatage,
+  };
+  await Offline.putPointage({
+    uuid,
+    id: null,
+    type,
+    client_id: clientId || null,
+    horodatage,
+    jour: toISODateLocal(new Date()),
+    pending: true,
   });
-  if (!res.ok) throw new Error("Réponse " + res.status);
-  return res.json();
+  await Offline.enqueue("pointage", payload);
+  Offline.sync();
+  return { uuid, horodatage };
 }
 
-async function postMandat(clientId, payload) {
-  const res = await fetch("/api/mandats", {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ client_id: clientId, ...payload }),
-  });
-  if (!res.ok) throw new Error("Réponse " + res.status);
-  return res.json();
+async function queueMandat(clientId, extra) {
+  const uuid = Offline.uuid();
+  const payload = {
+    uuid,
+    client_id: clientId,
+    description: extra.description,
+    duree_heures: extra.duree_heures,
+    date: toISODateLocal(new Date()),
+  };
+  await Offline.enqueue("mandat", payload);
+  Offline.sync();
+  return { uuid };
+}
+
+async function queueClient(nom, adresse) {
+  const uuid = Offline.uuid();
+  const client = { uuid, nom, adresse: adresse || null };
+  await Offline.putLocalClient(client);
+  await Offline.enqueue("client", client);
+  clientsCache = null;
+  clientsLoaded = false;
+  Offline.sync();
+  return { id: Offline.localRef(uuid), uuid, nom, adresse: adresse || null };
 }
 
 // Complete la duree d'un mandat une fois le trajet retour connu (voir lastMandatId
-// plus haut). N'echoue jamais bruyamment : si ca rate, le mandat garde simplement sa
-// duree provisoire (trajet aller + travail, minimum 1h).
+// plus haut). Mise en file comme le reste : aucun appel reseau direct ici, donc
+// aucun risque d'echec bruyant meme hors ligne — le mandat garde simplement sa
+// duree provisoire jusqu'a la synchronisation.
 async function completerTrajetRetour(minutesRetour) {
   if (lastMandatId == null) return;
-  const id = lastMandatId;
+  const mandatRef = lastMandatId;
   const totalMinutes = (lastMandatBaseMinutes || 0) + Math.max(0, minutesRetour);
   const dureeFinale = Math.round(Math.max(1, totalMinutes / 60) * 100) / 100;
   lastMandatId = null;
   lastMandatBaseMinutes = null;
-  try {
-    await fetch(`/api/mandats/${id}`, {
-      method: "PATCH",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ duree_heures: dureeFinale }),
-    });
-  } catch (err) {
-    // Pas grave : le mandat garde sa duree provisoire.
-  }
+  await Offline.enqueue("mandat-patch", { mandatRef, duree_heures: dureeFinale });
+  Offline.sync();
 }
 
 function updatePunchButton() {
@@ -298,7 +341,7 @@ function renderPointageEditForm(p, clients) {
       )
       .join("");
   return `
-    <div class="journal-item-edit" data-pointage-id="${p.id}" data-original-horodatage="${p.horodatage}">
+    <div class="journal-item-edit" data-pointage-uuid="${p.uuid}" data-original-horodatage="${p.horodatage}">
       <div class="form-group">
         <label class="form-label">Type</label>
         <select class="form-select" data-field="type">${typeOptions}</select>
@@ -323,7 +366,7 @@ function renderPointageEditForm(p, clients) {
 function attachPointageEditHandlers() {
   const editEl = stopsListEl.querySelector(".journal-item-edit");
   if (!editEl) return;
-  const id = Number(editEl.dataset.pointageId);
+  const uuidVal = editEl.dataset.pointageUuid;
 
   editEl.querySelector('[data-action="annuler-edit-pointage"]').addEventListener("click", () => {
     editingPointageId = null;
@@ -347,13 +390,36 @@ function attachPointageEditHandlers() {
       const original = new Date(editEl.dataset.originalHorodatage);
       const [hh, mm] = heureVal.split(":").map(Number);
       const nouvelleDate = new Date(original.getFullYear(), original.getMonth(), original.getDate(), hh, mm, 0, 0);
+      const horodatage = nouvelleDate.toISOString();
 
-      const res = await fetch(`/api/pointages/${id}`, {
-        method: "PATCH",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ type, client_id: clientId, horodatage: nouvelleDate.toISOString() }),
-      });
-      if (!res.ok) throw new Error("Réponse " + res.status);
+      const cached = await Offline.getPointage(uuidVal);
+      if (cached && cached.pending) {
+        // Pas encore envoye au serveur (peut arriver si on corrige un pointage
+        // pris hors ligne avant meme la synchronisation) : on corrige la copie
+        // locale et l'action en attente directement, pas besoin de reseau.
+        cached.type = type;
+        cached.client_id = clientId;
+        cached.horodatage = horodatage;
+        await Offline.putPointage(cached);
+        const outbox = await Offline.getOutbox();
+        const item = outbox.find((o) => o.kind === "pointage" && o.payload.uuid === uuidVal);
+        if (item) {
+          await Offline.updateOutboxPayload(item.seq, { ...item.payload, type, client_id: clientId, horodatage });
+        }
+      } else {
+        // Deja synchronise : on connait deja son vrai identifiant serveur, pas
+        // besoin de passer par la resolution differee (utile pour les
+        // references pas encore synchronisees, voir queueMandat/queueClient).
+        const pointageId = cached ? cached.id : null;
+        if (cached) {
+          cached.type = type;
+          cached.client_id = clientId;
+          cached.horodatage = horodatage;
+          await Offline.putPointage(cached);
+        }
+        await Offline.enqueue("pointage-patch", { pointageRef: pointageId, type, client_id: clientId, horodatage });
+        Offline.sync();
+      }
       editingPointageId = null;
       await refreshJournal();
       await initPointageState(); // reconstruit le chrono/bouton a partir des pointages a jour
@@ -369,8 +435,16 @@ function attachPointageEditHandlers() {
     const btn = e.target;
     btn.disabled = true;
     try {
-      const res = await fetch(`/api/pointages/${id}`, { method: "DELETE" });
-      if (!res.ok) throw new Error("Réponse " + res.status);
+      const cached = await Offline.getPointage(uuidVal);
+      if (cached && cached.pending) {
+        const outbox = await Offline.getOutbox();
+        const item = outbox.find((o) => o.kind === "pointage" && o.payload.uuid === uuidVal);
+        if (item) await Offline.removeFromOutbox(item.seq);
+      } else {
+        await Offline.enqueue("pointage-delete", { pointageRef: cached.id });
+        Offline.sync();
+      }
+      await Offline.deletePointageLocal(uuidVal);
       editingPointageId = null;
       await refreshJournal();
       await initPointageState();
@@ -383,55 +457,67 @@ function attachPointageEditHandlers() {
 }
 
 async function refreshJournal() {
+  const todayIso = toISODateLocal(new Date());
+  // Essaie d'abord d'aller chercher la version a jour du serveur ; si ca rate
+  // (hors ligne, reseau instable), on continue silencieusement avec le cache
+  // local — c'est exactement le but du mode hors ligne : pas d'erreur qui
+  // bloque l'ecran, juste les donnees les plus recentes qu'on a sous la main.
   try {
     const res = await fetch("/api/pointages");
-    if (!res.ok) throw new Error("Réponse " + res.status);
-    const pointages = await res.json();
-    if (!pointages.length) {
-      stopsListEl.innerHTML = `<div class="placeholder">Aucun pointage aujourd'hui.</div>`;
-      editingPointageId = null;
-      return pointages;
+    if (res.ok) {
+      const serverPointages = await res.json();
+      await Offline.mergeServerPointages(serverPointages, todayIso);
     }
-    const clients = await ensureClientsCache();
-    const nomOf = (id) => (clients.find((c) => String(c.id) === String(id)) || {}).nom;
-    stopsListEl.innerHTML = pointages
-      .map((p) => {
-        if (p.id === editingPointageId) {
-          return renderPointageEditForm(p, clients);
-        }
-        const heure = new Date(p.horodatage).toLocaleTimeString("fr-CA", { hour: "2-digit", minute: "2-digit" });
-        const sub = p.client_id ? nomOf(p.client_id) || "Client" : "";
-        return `
-      <div class="journal-item journal-item-clickable" data-pointage-id="${p.id}">
-        <div>
-          <div class="journal-item-label">${labelOfPointage(p.type)}</div>
-          ${sub ? `<div class="journal-item-sub">${escapeHtml(sub)}</div>` : ""}
-        </div>
-        <div class="journal-item-time">${heure}</div>
-      </div>`;
-      })
-      .join("");
-    stopsListEl.querySelectorAll(".journal-item-clickable").forEach((row) => {
-      row.addEventListener("click", () => {
-        editingPointageId = Number(row.dataset.pointageId);
-        refreshJournal();
-      });
-    });
-    attachPointageEditHandlers();
-    return pointages;
   } catch (err) {
-    stopsListEl.innerHTML = `<div class="placeholder">Impossible de charger le journal.<br>(${escapeHtml(
-      err.message
-    )})</div>`;
-    return [];
+    // Pas grave : on utilise le cache local ci-dessous.
   }
+
+  const all = await Offline.getAllPointages();
+  const pointages = all
+    .filter((p) => p.jour === todayIso)
+    .sort((a, b) => new Date(a.horodatage) - new Date(b.horodatage));
+
+  if (!pointages.length) {
+    stopsListEl.innerHTML = `<div class="placeholder">Aucun pointage aujourd'hui.</div>`;
+    editingPointageId = null;
+    return pointages;
+  }
+  const clients = await ensureClientsCache();
+  const nomOf = (id) => (clients.find((c) => String(c.id) === String(id)) || {}).nom;
+  stopsListEl.innerHTML = pointages
+    .map((p) => {
+      if (p.uuid === editingPointageId) {
+        return renderPointageEditForm(p, clients);
+      }
+      const heure = new Date(p.horodatage).toLocaleTimeString("fr-CA", { hour: "2-digit", minute: "2-digit" });
+      const sub = p.client_id ? nomOf(p.client_id) || "Client" : "";
+      return `
+    <div class="journal-item journal-item-clickable${
+      p.pending ? " journal-item-pending" : ""
+    }" data-pointage-uuid="${p.uuid}">
+      <div>
+        <div class="journal-item-label">${labelOfPointage(p.type)}</div>
+        ${sub ? `<div class="journal-item-sub">${escapeHtml(sub)}</div>` : ""}
+      </div>
+      <div class="journal-item-time">${heure}${p.pending ? '<span class="pending-tag">en attente</span>' : ""}</div>
+    </div>`;
+    })
+    .join("");
+  stopsListEl.querySelectorAll(".journal-item-clickable").forEach((row) => {
+    row.addEventListener("click", () => {
+      editingPointageId = row.dataset.pointageUuid;
+      refreshJournal();
+    });
+  });
+  attachPointageEditHandlers();
+  return pointages;
 }
 
 btnPunch.addEventListener("click", async () => {
   btnPunch.disabled = true;
   try {
     if (jourState.status === "not_started") {
-      await postPointage("depart_entrepot", null);
+      await queuePointage("depart_entrepot", null);
       mainStartedAt = Date.now();
       lastDepartAt = mainStartedAt;
       startMainTick();
@@ -441,7 +527,7 @@ btnPunch.addEventListener("click", async () => {
       await refreshJournal();
     } else if (jourState.status === "en_route") {
       const minutesRetour = lastDepartAt ? Math.max(0, Math.round((Date.now() - lastDepartAt) / 60000)) : 0;
-      await postPointage("retour_entrepot", null);
+      await queuePointage("retour_entrepot", null);
       await completerTrajetRetour(minutesRetour);
       stopMainTick();
       lastDepartAt = null;
@@ -466,7 +552,7 @@ punchFlowEl.addEventListener("click", async (e) => {
     if (action === "arrivee") {
       const clientId = target.dataset.clientId;
       const clientNom = target.dataset.clientNom;
-      await postPointage("arrivee_client", clientId);
+      await queuePointage("arrivee_client", clientId);
       subStartedAt = Date.now();
       jourState.trajetMinutes = lastDepartAt
         ? Math.max(0, Math.round((subStartedAt - lastDepartAt) / 60000))
@@ -492,16 +578,8 @@ punchFlowEl.addEventListener("click", async (e) => {
         alert("Le nom du client est requis.");
         return;
       }
-      const res = await fetch("/api/clients", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ nom, adresse }),
-      });
-      if (!res.ok) throw new Error("Réponse " + res.status);
-      const client = await res.json();
-      clientsCache = null;
-      clientsLoaded = false;
-      await postPointage("arrivee_client", client.id);
+      const client = await queueClient(nom, adresse);
+      await queuePointage("arrivee_client", client.id);
       subStartedAt = Date.now();
       jourState.trajetMinutes = lastDepartAt
         ? Math.max(0, Math.round((subStartedAt - lastDepartAt) / 60000))
@@ -515,7 +593,7 @@ punchFlowEl.addEventListener("click", async (e) => {
       await renderPunchFlow();
       await refreshJournal();
     } else if (action === "terminer-client") {
-      await postPointage("depart_client", jourState.clientId);
+      await queuePointage("depart_client", jourState.clientId);
       // Duree provisoire du mandat = trajet aller + temps sur place (mesures reels),
       // avec un minimum de 1 h. Le trajet retour n'est pas encore connu (on ne sait
       // pas encore quand on arrivera au prochain arret) : il sera ajoute des que ce
@@ -532,11 +610,11 @@ punchFlowEl.addEventListener("click", async (e) => {
       await refreshJournal();
     } else if (action === "enregistrer-mandat") {
       const description = document.getElementById("mandat-desc").value.trim();
-      const mandat = await postMandat(jourState.clientId, {
+      const mandat = await queueMandat(jourState.clientId, {
         description: description || null,
         duree_heures: jourState.dureeHeures,
       });
-      lastMandatId = mandat.id;
+      lastMandatId = Offline.localRef(mandat.uuid);
       lastMandatBaseMinutes = jourState.dureeBaseMinutes;
       jourState.status = "en_route";
       jourState.clientId = null;
@@ -621,12 +699,32 @@ let clientsCache = null;
 
 async function ensureClientsCache() {
   if (clientsCache) return clientsCache;
+  let serverClients = null;
   try {
     const res = await fetch("/api/clients");
-    clientsCache = res.ok ? await res.json() : [];
+    if (res.ok) {
+      serverClients = await res.json();
+      await Offline.kvSet("clients_cache", serverClients);
+    }
   } catch (err) {
-    clientsCache = [];
+    serverClients = null;
   }
+  if (!serverClients) {
+    // Hors ligne (ou serveur injoignable) : on retombe sur la derniere liste
+    // connue, enregistree localement lors du dernier chargement reussi.
+    serverClients = (await Offline.kvGet("clients_cache")) || [];
+  }
+  // Ajoute les clients crees hors ligne mais pas encore synchronises, pour
+  // qu'ils soient choisissables tout de suite (ex: "où vas-tu ?").
+  const localClients = await Offline.getAllLocalClients();
+  const localAsClients = localClients.map((c) => ({
+    id: Offline.localRef(c.uuid),
+    nom: c.nom,
+    adresse: c.adresse,
+    trajet_minutes: null,
+    heures_semaine: 0,
+  }));
+  clientsCache = serverClients.concat(localAsClients);
   return clientsCache;
 }
 
@@ -1085,6 +1183,8 @@ function exportSemaineCSV(data) {
 }
 
 initPointageState();
+Offline.notify();
+Offline.sync(); // rattrape tout de suite les actions restees en attente d'une session precedente
 
 // --- Service worker (rend l'app installable et utilisable hors ligne) ---
 if ("serviceWorker" in navigator) {
