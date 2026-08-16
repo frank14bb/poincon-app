@@ -1,11 +1,12 @@
 // Version du cache — on l'incrémente à chaque changement important
 // pour forcer les téléphones à récupérer la nouvelle version.
-const CACHE_NAME = "poincon-v2";
+const CACHE_NAME = "poincon-v3";
 
 const APP_SHELL = [
   "/",
   "/index.html",
   "/css/styles.css",
+  "/js/offline.js",
   "/js/app.js",
   "/manifest.json",
   "/icons/icon-192.png",
