@@ -269,12 +269,17 @@ nav.tabbar {
 .client-address-header { font-size: 13px; color: var(--text-dim); margin-bottom: 4px; }
 
 .mandat-item { padding: 14px 16px; }
-.mandat-item + .mandat-item { border-top: 1px solid var(--border); }
+.mandat-item + .mandat-item,
+.mandat-item-edit + .mandat-item,
+.mandat-item + .mandat-item-edit { border-top: 1px solid var(--border); }
 .mandat-top { display: flex; justify-content: space-between; }
 .mandat-date { font-size: 11px; color: var(--text-dim); text-transform: uppercase; }
 .mandat-desc { font-weight: 600; font-size: 14px; margin-top: 2px; }
 .mandat-value { font-weight: 700; color: var(--accent); }
 .mandat-meta { font-size: 12px; color: var(--text-dim); margin-top: 4px; }
+.mandat-item-clickable { cursor: pointer; }
+.mandat-item-clickable:active { opacity: 0.7; }
+.mandat-item-edit { padding: 14px 16px; display: flex; flex-direction: column; gap: 12px; }
 
 /* Réglages */
 .form-group { margin-bottom: 14px; }
