@@ -857,20 +857,62 @@ addClientCard.addEventListener("click", async (e) => {
   }
 });
 
-async function openClient(id) {
+let currentClientId = null;
+let currentClientData = null;
+let editingMandatId = null;
+
+async function openClient(id, keepEditState) {
   clientsListPanel.style.display = "none";
   clientsDetailPanel.style.display = "block";
+  currentClientId = id;
+  if (!keepEditState) editingMandatId = null;
   clientDetailContent.innerHTML = `<div class="placeholder">Chargement…</div>`;
   try {
     const res = await fetch(`/api/clients/${id}`);
     if (!res.ok) throw new Error("Réponse " + res.status);
     const c = await res.json();
+    currentClientData = c;
+    renderClientDetail(c);
+  } catch (err) {
+    clientDetailContent.innerHTML = `<div class="placeholder">Impossible de charger cette fiche.<br>(${escapeHtml(
+      err.message
+    )})</div>`;
+  }
+}
 
-    const mandatsHtml = c.mandats.length
-      ? c.mandats
-          .map(
-            (m) => `
-        <div class="mandat-item">
+function renderMandatEditForm(m) {
+  return `
+    <div class="mandat-item-edit" data-mandat-id="${m.id}">
+      <div class="form-group">
+        <label class="form-label">Description</label>
+        <input class="form-input" type="text" data-field="description" value="${escapeHtml(m.description || "")}">
+      </div>
+      <div class="form-group">
+        <label class="form-label">Durée (heures)</label>
+        <input class="form-input" type="number" step="0.25" min="0" data-field="duree" value="${
+          m.duree_heures ?? ""
+        }">
+      </div>
+      <div class="form-group">
+        <label class="form-label">Notes</label>
+        <input class="form-input" type="text" data-field="notes" value="${escapeHtml(m.notes || "")}">
+      </div>
+      <div class="journal-edit-actions">
+        <button class="btn btn-primary" data-action="enregistrer-mandat-edit">Enregistrer</button>
+        <button class="btn btn-secondary" data-action="annuler-edit-mandat">Annuler</button>
+        <button class="btn btn-danger" data-action="supprimer-mandat">Supprimer ce mandat</button>
+      </div>
+    </div>
+  `;
+}
+
+function renderClientDetail(c) {
+  const mandatsHtml = c.mandats.length
+    ? c.mandats
+        .map((m) => {
+          if (m.id === editingMandatId) return renderMandatEditForm(m);
+          return `
+        <div class="mandat-item mandat-item-clickable" data-mandat-id="${m.id}">
           <div class="mandat-top">
             <div>
               <div class="mandat-date">${parseDateLocal(m.date).toLocaleDateString("fr-CA", {
@@ -882,41 +924,101 @@ async function openClient(id) {
             <div class="mandat-value">${heures(m.duree_heures)}</div>
           </div>
           ${m.nb_photos ? `<div class="mandat-meta">${m.nb_photos} photos</div>` : ""}
-        </div>`
-          )
-          .join("")
-      : `<div class="placeholder">Aucun mandat enregistré pour ce client.</div>`;
+        </div>`;
+        })
+        .join("")
+    : `<div class="placeholder">Aucun mandat enregistré pour ce client.</div>`;
 
-    clientDetailContent.innerHTML = `
-      <div class="client-name-header">${escapeHtml(c.nom)}</div>
-      <div class="client-address-header">${escapeHtml(c.adresse || "")}</div>
-      <div class="client-stats">
-        <div class="client-stat">
-          <div class="client-stat-label">Heures</div>
-          <div class="client-stat-value">${heures(c.total_heures)}</div>
-        </div>
-        <div class="client-stat">
-          <div class="client-stat-label">Mandats</div>
-          <div class="client-stat-value">${c.nb_mandats}</div>
-        </div>
-        <div class="client-stat">
-          <div class="client-stat-label">Trajet</div>
-          <div class="client-stat-value">${c.trajet_minutes ? c.trajet_minutes + " min" : "—"}</div>
-        </div>
+  clientDetailContent.innerHTML = `
+    <div class="client-name-header">${escapeHtml(c.nom)}</div>
+    <div class="client-address-header">${escapeHtml(c.adresse || "")}</div>
+    <div class="client-stats">
+      <div class="client-stat">
+        <div class="client-stat-label">Heures</div>
+        <div class="client-stat-value">${heures(c.total_heures)}</div>
       </div>
-      <div class="section-title">Historique des mandats</div>
-      <div class="card list-card">${mandatsHtml}</div>
-    `;
-  } catch (err) {
-    clientDetailContent.innerHTML = `<div class="placeholder">Impossible de charger cette fiche.<br>(${escapeHtml(
-      err.message
-    )})</div>`;
-  }
+      <div class="client-stat">
+        <div class="client-stat-label">Mandats</div>
+        <div class="client-stat-value">${c.nb_mandats}</div>
+      </div>
+      <div class="client-stat">
+        <div class="client-stat-label">Trajet</div>
+        <div class="client-stat-value">${c.trajet_minutes ? c.trajet_minutes + " min" : "—"}</div>
+      </div>
+    </div>
+    <div class="section-title">Historique des mandats</div>
+    <div class="card list-card">${mandatsHtml}</div>
+  `;
+
+  clientDetailContent.querySelectorAll(".mandat-item-clickable").forEach((row) => {
+    row.addEventListener("click", () => {
+      editingMandatId = Number(row.dataset.mandatId);
+      renderClientDetail(currentClientData);
+    });
+  });
+
+  attachMandatEditHandlers();
+}
+
+function attachMandatEditHandlers() {
+  const editEl = clientDetailContent.querySelector(".mandat-item-edit");
+  if (!editEl) return;
+  const mandatId = Number(editEl.dataset.mandatId);
+
+  editEl.querySelector('[data-action="annuler-edit-mandat"]').addEventListener("click", () => {
+    editingMandatId = null;
+    renderClientDetail(currentClientData);
+  });
+
+  editEl.querySelector('[data-action="enregistrer-mandat-edit"]').addEventListener("click", async (e) => {
+    const btn = e.target;
+    btn.disabled = true;
+    try {
+      const description = editEl.querySelector('[data-field="description"]').value.trim();
+      const dureeVal = editEl.querySelector('[data-field="duree"]').value;
+      const notes = editEl.querySelector('[data-field="notes"]').value.trim();
+      const res = await fetch(`/api/mandats/${mandatId}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          description: description || null,
+          duree_heures: dureeVal === "" ? null : Number(dureeVal),
+          notes: notes || null,
+        }),
+      });
+      if (!res.ok) throw new Error("Réponse " + res.status);
+      editingMandatId = null;
+      clientsCache = null; // les heures du client ont pu changer -> reconstruit au prochain accès
+      await openClient(currentClientId, true);
+    } catch (err) {
+      alert("Erreur : " + err.message);
+    } finally {
+      btn.disabled = false;
+    }
+  });
+
+  editEl.querySelector('[data-action="supprimer-mandat"]').addEventListener("click", async (e) => {
+    if (!confirm("Supprimer ce mandat ? Cette action est irréversible.")) return;
+    const btn = e.target;
+    btn.disabled = true;
+    try {
+      const res = await fetch(`/api/mandats/${mandatId}`, { method: "DELETE" });
+      if (!res.ok) throw new Error("Réponse " + res.status);
+      editingMandatId = null;
+      clientsCache = null;
+      await openClient(currentClientId, true);
+    } catch (err) {
+      alert("Erreur : " + err.message);
+    } finally {
+      btn.disabled = false;
+    }
+  });
 }
 
 btnClientBack.addEventListener("click", () => {
   clientsDetailPanel.style.display = "none";
   clientsListPanel.style.display = "block";
+  editingMandatId = null;
 });
 
 function escapeHtml(str) {
