@@ -1,9 +1,9 @@
 {
-    "name": "poincon-app",
-    "version": "1.0.0",
-    "private": true,
-    "description": "Suivi des travaux clients — pointage, trajets et facturation",
-    "dependencies": {
-          "@netlify/database": "*"
-    }
+  "name": "poincon-app",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Suivi des travaux clients — pointage, trajets et facturation",
+  "dependencies": {
+    "@netlify/database": "*"
+  }
 }
